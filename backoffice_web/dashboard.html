@@ -1,0 +1,488 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>StoreNET PC - Enterprise Dashboard</title>
+    <link rel="stylesheet" href="style.css">
+</head>
+<body class="dashboard-body">
+    <div class="system-container">
+        <!-- Top Navigation -->
+        <nav class="top-nav">
+            <div class="nav-tabs">
+                <div class="nav-tab active">StoreNET PC</div>
+                <div class="nav-tab">Enterprise Scheduling</div>
+                <div class="nav-tab">Global Inventory</div>
+                <div class="nav-tab">CBL Learning Portal</div>
+            </div>
+            <div class="user-info">
+                <span id="display-eid">ADMIN ID: 3756772</span>
+                <span id="current-date"></span>
+                <button class="next-day-btn" onclick="advanceDay()">⏩ NEXT DAY</button>
+            </div>
+        </nav>
+
+        <header class="logo-header dashboard-header">
+            <div class="logo-box">
+                <span class="logo-text-black">Store</span><span class="logo-text-yellow">NET</span>
+            </div>
+        </header>
+
+        <main class="dashboard-content">
+            <div class="button-grid">
+                <button class="grid-btn" onclick="openMenu('tasks')">
+                    <span class="btn-icon">📋</span><span class="btn-label">START Task Manager</span>
+                </button>
+                <button class="grid-btn" onclick="openMenu('tickets')">
+                    <span class="btn-icon">🔧</span><span class="btn-label">ERC / Facility Tickets</span>
+                </button>
+                <button class="grid-btn" onclick="openMenu('scheduling')">
+                    <span class="btn-icon">⏰</span><span class="btn-label">Payroll & Scheduling</span>
+                </button>
+                
+                <button class="grid-btn" onclick="openMenu('inventory')">
+                    <span class="btn-icon">📦</span><span class="btn-label">Inventory & Receiving</span>
+                </button>
+                <button class="grid-btn" onclick="openMenu('prices')">
+                    <span class="btn-icon">🏷️</span><span class="btn-label">Price Changes (EPLs)</span>
+                </button>
+                <button class="grid-btn" onclick="openMenu('daily')">
+                    <span class="btn-icon">💵</span><span class="btn-label">Till & Cash Mgmt</span>
+                </button>
+
+                <button class="grid-btn" onclick="openMenu('reports')">
+                    <span class="btn-icon">📈</span><span class="btn-label">Store Analytics</span>
+                </button>
+                <button class="grid-btn" style="background-color: #333; border-color: #000;" onclick="openMenu('admin')">
+                    <span class="btn-icon">⚙️</span><span class="btn-label">System Admin</span>
+                </button>
+                <button class="grid-btn btn-danger" onclick="window.location.href='/logout'">
+                    <span class="btn-icon">🚪</span><span class="btn-label">Log Off Terminal</span>
+                </button>
+            </div>
+        </main>
+        
+        <footer class="system-footer">
+            <div class="footer-status">SYSTEM READY - CONNECTED TO HEADQUARTERS</div>
+            <div class="footer-version">v3.0.0-ENTERPRISE</div>
+        </footer>
+    </div>
+
+    <!-- TASKS MODAL -->
+    <div id="tasksModal" class="modal">
+        <div class="modal-content wide">
+            <div class="modal-header"><h3>START Task Manager</h3><span class="close-btn" onclick="closeModal('tasksModal')">&times;</span></div>
+            <div class="modal-body" id="taskListContainer">
+                <!-- JS Populated -->
+            </div>
+        </div>
+    </div>
+
+    <!-- TICKETS MODAL -->
+    <div id="ticketsModal" class="modal">
+        <div class="modal-content wide">
+            <div class="modal-header"><h3>ERC & Facility Ticketing</h3><span class="close-btn" onclick="closeModal('ticketsModal')">&times;</span></div>
+            <div class="modal-body">
+                <div class="tab-bar">
+                    <button class="tab-btn active" onclick="switchTab(this, 'tkt-view'); loadTickets();">View Tickets</button>
+                    <button class="tab-btn" onclick="switchTab(this, 'tkt-new')">Submit New Ticket</button>
+                </div>
+                <div id="tkt-view" class="tab-section active" id="ticketListContainer">
+                    <!-- JS Populated -->
+                </div>
+                <div id="tkt-new" class="tab-section">
+                    <form id="newTicketForm" class="login-form">
+                        <div class="input-group">
+                            <label>Category</label>
+                            <select id="tktCat">
+                                <option>Point of Sale (POS) Issue</option>
+                                <option>HHT / Scanner Issue</option>
+                                <option>HVAC / Temperature</option>
+                                <option>Plumbing / Restroom</option>
+                                <option>Exterior Signage</option>
+                            </select>
+                        </div>
+                        <div class="input-group">
+                            <label>Description of Issue</label>
+                            <input type="text" id="tktDesc" required placeholder="Be specific. Provide error codes if applicable.">
+                        </div>
+                        <button type="submit" class="btn-primary">Submit to Corporate Help Desk</button>
+                    </form>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- PRICE CHANGES MODAL -->
+    <div id="pricesModal" class="modal">
+        <div class="modal-content wide">
+            <div class="modal-header"><h3>Price Changes (EPLs)</h3><span class="close-btn" onclick="closeModal('pricesModal')">&times;</span></div>
+            <div class="modal-body">
+                <div class="admin-warning" style="background: #E6F0F5; border-color: #5B8092; color: #333;">Action Required: Pending Price Updates downloaded from host.</div>
+                <table class="data-table" id="pricesTable">
+                    <thead><tr><th>SKU</th><th>Item Description</th><th>Old Price</th><th>New Price</th></tr></thead>
+                    <tbody></tbody>
+                </table>
+                <div style="display:flex; justify-content:space-between; align-items:center;">
+                    <span id="priceCount" style="font-weight:bold;">0 items pending</span>
+                    <div>
+                        <button class="btn-primary" style="background:#444;" onclick="alert('Printing batches to Lexmark printer...')">1. Print Labels</button>
+                        <button class="action-btn" style="padding: 12px 20px; font-size:14px;" onclick="commitPrices()">2. Commit Prices to POS</button>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- SCHEDULING / PAYROLL MODAL -->
+    <div id="scheduleModal" class="modal">
+        <div class="modal-content xtra-wide">
+            <div class="modal-header"><h3>Time, Payroll & Scheduling</h3><span class="close-btn" onclick="closeModal('scheduleModal')">&times;</span></div>
+            <div class="modal-body">
+                <div class="tab-bar">
+                    <button class="tab-btn active" onclick="switchTab(this, 'sch-exceptions'); loadPunches();">Payroll Exceptions (Urgent)</button>
+                    <button class="tab-btn" onclick="switchTab(this, 'sch-build'); buildScheduleGrid();">Schedule Builder</button>
+                    <button class="tab-btn" onclick="switchTab(this, 'sch-list'); loadEmployees();">Active Roster</button>
+                </div>
+                
+                <!-- Payroll Exceptions -->
+                <div id="sch-exceptions" class="tab-section active">
+                    <div class="admin-warning" id="payrollWarn">Review and correct all punch errors before approving payroll.</div>
+                    <div style="margin-bottom: 10px; display: flex; gap: 10px; align-items: center; background: #eee; padding: 10px;">
+                        <input type="date" id="newPunchDate" class="sch-input" style="padding: 5px;">
+                        <select id="newPunchEmp" class="sch-input" style="padding: 5px;"><option value="">Select Employee...</option></select>
+                        <input type="time" id="newPunchIn" class="sch-input" style="padding: 5px;" title="Punch In">
+                        <input type="time" id="newPunchOut" class="sch-input" style="padding: 5px;" title="Punch Out">
+                        <button class="action-btn" style="background:#2980b9;" onclick="addPunch()">Add Punch</button>
+                    </div>
+                    <table class="data-table" id="punchesTable">
+                        <thead><tr><th>Date</th><th>Employee</th><th>Punch In</th><th>Punch Out</th><th>Status/Exception</th><th>Action</th></tr></thead>
+                        <tbody></tbody>
+                    </table>
+                </div>
+
+                <!-- Schedule Builder -->
+                <div id="sch-build" class="tab-section">
+                    <div class="labor-budget" id="laborBox">Allocated Hours: 118.00 | Scheduled: <span id="schHrs">0.00</span></div>
+                    <div id="scheduleGridContainer"></div>
+                    <button class="btn-primary" onclick="alert('Schedule Published to Team!')" style="width:100%;">Publish Schedule</button>
+                </div>
+
+                <!-- Active Roster -->
+                <div id="sch-list" class="tab-section">
+                    <table class="data-table" id="empTable"><thead><tr><th>ID</th><th>Name</th><th>Position</th><th>Wage</th><th>Status</th></tr></thead><tbody></tbody></table>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- DAILY MODAL (Cash) -->
+    <div id="dailyModal" class="modal">
+        <div class="modal-content wide">
+            <div class="modal-header"><h3>Till & Cash Management</h3><span class="close-btn" onclick="closeModal('dailyModal')">&times;</span></div>
+            <div class="modal-body">
+                <div class="tab-bar">
+                    <button class="tab-btn active" onclick="switchTab(this, 'daily-money')">Till / Deposit Calculator</button>
+                    <button class="tab-btn" onclick="switchTab(this, 'daily-change')">Armored Car Change Order</button>
+                </div>
+                <div id="daily-money" class="tab-section active">
+                    <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 20px;">
+                        <div>
+                            <table class="data-table">
+                                <tr><th>Coin</th><th>Count</th><th>Value</th></tr>
+                                <tr><td>Pennies</td><td><input type="number" class="money-input" data-val="0.01" oninput="calcMoney()"></td><td class="row-val">$0.00</td></tr>
+                                <tr><td>Nickels</td><td><input type="number" class="money-input" data-val="0.05" oninput="calcMoney()"></td><td class="row-val">$0.00</td></tr>
+                                <tr><td>Dimes</td><td><input type="number" class="money-input" data-val="0.10" oninput="calcMoney()"></td><td class="row-val">$0.00</td></tr>
+                                <tr><td>Quarters</td><td><input type="number" class="money-input" data-val="0.25" oninput="calcMoney()"></td><td class="row-val">$0.00</td></tr>
+                            </table>
+                        </div>
+                        <div>
+                            <table class="data-table">
+                                <tr><th>Bill</th><th>Count</th><th>Value</th></tr>
+                                <tr><td>Ones</td><td><input type="number" class="money-input" data-val="1" oninput="calcMoney()"></td><td class="row-val">$0.00</td></tr>
+                                <tr><td>Fives</td><td><input type="number" class="money-input" data-val="5" oninput="calcMoney()"></td><td class="row-val">$0.00</td></tr>
+                                <tr><td>Tens</td><td><input type="number" class="money-input" data-val="10" oninput="calcMoney()"></td><td class="row-val">$0.00</td></tr>
+                                <tr><td>Twenties</td><td><input type="number" class="money-input" data-val="20" oninput="calcMoney()"></td><td class="row-val">$0.00</td></tr>
+                                <tr><td>Hundreds</td><td><input type="number" class="money-input" data-val="100" oninput="calcMoney()"></td><td class="row-val">$0.00</td></tr>
+                            </table>
+                        </div>
+                    </div>
+                    <div style="background: #333; color: #FFF; padding: 15px; font-size: 24px; text-align: right; margin-top: 15px; border: 3px solid #FFD100;">
+                        Total Amount: <span id="moneyTotal" style="color: #FFD100; font-weight: bold; margin-left: 20px;">$0.00</span>
+                    </div>
+                    <button class="btn-primary" style="margin-top: 15px; width: 100%; font-size: 18px;" onclick="alert('Submitted to back office.'); closeModal('dailyModal');">Submit EOD Count</button>
+                </div>
+                <div id="daily-change" class="tab-section">
+                    <form class="login-form"><div class="form-row"><div class="input-group"><label>Penny Rolls ($0.50)</label><input type="number"></div><div class="input-group"><label>Nickel Rolls ($2.00)</label><input type="number"></div></div><button type="button" class="btn-primary" onclick="alert('Submitted to Loomis/Brinks!')">Submit Order</button></form>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- INVENTORY MODAL -->
+    <div id="inventoryModal" class="modal">
+        <div class="modal-content wide">
+            <div class="modal-header"><h3>Inventory & Receiving</h3><span class="close-btn" onclick="closeModal('inventoryModal')">&times;</span></div>
+            <div class="modal-body">
+                <div class="tab-bar">
+                    <button class="tab-btn active" onclick="switchTab(this, 'inv-vendor'); loadVendorDeliveries();">Vendor Drops</button>
+                    <button class="tab-btn" onclick="switchTab(this, 'inv-damage')">Damages/Returns</button>
+                    <button class="tab-btn" onclick="switchTab(this, 'inv-list'); loadInventory();">Master Inventory</button>
+                </div>
+                <div id="inv-vendor" class="tab-section active">
+                    <table class="data-table" id="vendorTable"><thead><tr><th>ID</th><th>Vendor</th><th>Date</th><th>Status</th><th>Action</th></tr></thead><tbody></tbody></table>
+                </div>
+                <div id="inv-damage" class="tab-section">
+                    <form id="damageForm" class="login-form">
+                        <div class="form-row"><div class="input-group"><label>SKU</label><input type="text" id="damSku" required></div><div class="input-group"><label>Quantity</label><input type="number" id="damQty" required></div></div>
+                        <div class="form-row"><div class="input-group"><label>Type</label><select id="damType"><option>Damage</option><option>Return</option></select></div><div class="input-group"><label>Reason</label><input type="text" id="damReason" required></div></div>
+                        <button type="submit" class="btn-primary">Process</button>
+                    </form>
+                </div>
+                <div id="inv-list" class="tab-section">
+                    <table class="data-table" id="inventoryTable"><thead><tr><th>SKU</th><th>Name</th><th>Dept</th><th>QTY</th><th>Price</th></tr></thead><tbody></tbody></table>
+                </div>
+            </div>
+        </div>
+    </div>
+    
+    <!-- REPORTS & ADMIN BLOCKS OMITTED FOR BREVITY, KEPT SAME LOGIC -->
+    <div id="adminModal" class="modal"><div class="modal-content wide"><div class="modal-header"><h3>System Admin</h3><span class="close-btn" onclick="closeModal('adminModal')">&times;</span></div><div class="modal-body"><table class="data-table" id="adminLogsTable"><thead><tr><th>ID</th><th>User EID</th><th>Action</th><th>Timestamp</th></tr></thead><tbody></tbody></table></div></div></div>
+    <div id="reportsModal" class="modal"><div class="modal-content wide"><div class="modal-header"><h3>Analytics</h3><span class="close-btn" onclick="closeModal('reportsModal')">&times;</span></div><div class="modal-body"><table class="data-table" id="salesTable"><thead><tr><th>Date</th><th>Net Sales</th><th>Transactions</th><th>Over/Short</th></tr></thead><tbody></tbody></table></div></div></div>
+
+    <script>
+        // INIT & DATE
+        let currentDate = '';
+        async function fetchDate() {
+            const res = await fetch('/api/system/date');
+            const data = await res.json();
+            currentDate = data.date;
+            document.getElementById('current-date').textContent = 'System Date: ' + currentDate;
+        }
+        fetchDate();
+
+        async function advanceDay() {
+            const btn = document.querySelector('.next-day-btn');
+            btn.textContent = 'PROCESSING...';
+            btn.disabled = true;
+            const res = await fetch('/api/system/next-day', { method: 'POST' });
+            const data = await res.json();
+            currentDate = data.newDate;
+            document.getElementById('current-date').textContent = 'System Date: ' + currentDate;
+            alert('End of Day processes completed. System advanced to ' + currentDate);
+            btn.textContent = '⏩ NEXT DAY';
+            btn.disabled = false;
+        }
+
+        // MODAL LOGIC
+        function openMenu(menu) {
+            document.querySelectorAll('.modal').forEach(m => m.style.display = 'none');
+            if (menu === 'tasks') { document.getElementById('tasksModal').style.display = 'flex'; loadTasks(); }
+            else if (menu === 'tickets') { document.getElementById('ticketsModal').style.display = 'flex'; loadTickets(); }
+            else if (menu === 'scheduling') { document.getElementById('scheduleModal').style.display = 'flex'; loadPunches(); }
+            else if (menu === 'prices') { document.getElementById('pricesModal').style.display = 'flex'; loadPrices(); }
+            else if (menu === 'daily') { document.getElementById('dailyModal').style.display = 'flex'; }
+            else if (menu === 'inventory') { document.getElementById('inventoryModal').style.display = 'flex'; loadVendorDeliveries(); }
+            else if (menu === 'admin') { document.getElementById('adminModal').style.display = 'flex'; loadAdminLogs(); }
+            else if (menu === 'reports') { document.getElementById('reportsModal').style.display = 'flex'; loadSales(); }
+        }
+        function closeModal(id) { document.getElementById(id).style.display = 'none'; }
+        window.onclick = function(e) { if (e.target.classList.contains('modal')) e.target.style.display = "none"; }
+        function switchTab(btn, targetId) {
+            const body = btn.closest('.modal-body');
+            body.querySelectorAll('.tab-section').forEach(s => s.classList.remove('active'));
+            body.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
+            document.getElementById(targetId).classList.add('active');
+            btn.classList.add('active');
+        }
+
+        // TASKS
+        async function loadTasks() {
+            const data = await (await fetch('/api/tasks')).json();
+            const c = document.getElementById('taskListContainer'); c.innerHTML = '';
+            if(data.length === 0) { c.innerHTML = '<p>No pending tasks.</p>'; return; }
+            data.forEach(t => {
+                c.innerHTML += `<div class="task-item">
+                    <div><div class="task-title">${t.title}</div><div class="task-desc">${t.description}</div></div>
+                    <button class="action-btn" onclick="completeTask(${t.id})">Mark Complete</button>
+                </div>`;
+            });
+        }
+        async function completeTask(id) { await fetch('/api/tasks/complete', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({id})}); loadTasks(); }
+
+        // TICKETS
+        async function loadTickets() {
+            const data = await (await fetch('/api/tickets')).json();
+            const c = document.getElementById('tkt-view'); c.innerHTML = '';
+            if(data.length === 0) { c.innerHTML = '<p>No ticket history.</p>'; return; }
+            data.forEach(t => {
+                const isOpen = t.status === 'Open';
+                c.innerHTML += `<div class="ticket-item ${isOpen ? 'open' : 'closed'}">
+                    <div class="ticket-header"><span>Ticket #${t.id} - ${t.category}</span><span>${t.status}</span></div>
+                    <div class="ticket-body">${t.description}</div>
+                    ${t.resolution ? `<div class="ticket-res"><b>Corporate Resolution:</b> ${t.resolution}</div>` : ''}
+                    ${!isOpen ? `<button class="action-btn danger" style="margin-top:10px;" onclick="reopenTicket(${t.id})">Reopen Ticket (Issue Persists)</button>` : ''}
+                </div>`;
+            });
+        }
+        document.getElementById('newTicketForm').onsubmit = async (e) => {
+            e.preventDefault();
+            await fetch('/api/tickets', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({category: document.getElementById('tktCat').value, description: document.getElementById('tktDesc').value})});
+            alert('Ticket Submitted.'); document.getElementById('newTicketForm').reset(); switchTab(document.querySelector('#ticketsModal .tab-btn'), 'tkt-view'); loadTickets();
+        };
+        async function reopenTicket(id) { await fetch('/api/tickets/reopen', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({id})}); loadTickets(); }
+
+        // PAYROLL & SCHEDULING
+        async function loadPunches() {
+            const data = await (await fetch('/api/punches')).json();
+            const emps = await (await fetch('/api/employees')).json();
+
+            const empSel = document.getElementById('newPunchEmp');
+            if (empSel && empSel.options.length <= 1) {
+                emps.forEach(e => empSel.innerHTML += `<option value="${e.id}">${e.first_name} ${e.last_name}</option>`);
+            }
+
+            const tb = document.querySelector('#punchesTable tbody'); tb.innerHTML = '';
+            data.forEach(d => {
+                const isErr = d.exception_type != null;
+                const rowClass = isErr ? 'error-row' : (d.approved ? 'resolved-row' : '');
+                const statusHtml = isErr ? `<b>${d.exception_type}</b>` : (d.approved ? 'Approved' : 'Pending');
+
+                let actionHtml = '';
+                if(isErr && d.exception_type === 'Missed Punch') {
+                    actionHtml = `<input type="time" id="fix_${d.id}" style="width:100px; padding:2px;"><button class="action-btn" onclick="fixPunch(${d.id})">Fix</button>`;
+                } else if (isErr && d.exception_type === 'Meal Penalty') {
+                    actionHtml = `<button class="action-btn danger" onclick="ackPenalty(${d.id})">Acknowledge</button>`;
+                } else if (!d.approved) {
+                    actionHtml = `<button class="action-btn" onclick="apprPunch(${d.id})">Approve</button>`;
+                }
+
+                // Add Edit and Delete to all rows
+                actionHtml += ` <button class="action-btn" style="background:#f39c12; border:1px solid #e67e22;" onclick="editPunchPrompt(${d.id}, ${d.employee_id}, '${d.date}', '${d.punch_in}', '${d.punch_out}')">Edit</button>`;
+                actionHtml += ` <button class="action-btn danger" onclick="deletePunch(${d.id})">X</button>`;
+
+                tb.innerHTML += `<tr class="${rowClass}"><td>${d.date}</td><td>${d.first_name} ${d.last_name}</td><td>${d.punch_in}</td><td><b>${d.punch_out}</b></td><td style="color:${isErr?'#D8000C':''}">${statusHtml}</td><td>${actionHtml}</td></tr>`;
+            });
+        }
+        async function addPunch() {
+            const date = document.getElementById('newPunchDate').value;
+            const empId = document.getElementById('newPunchEmp').value;
+            const pin = document.getElementById('newPunchIn').value;
+            const pout = document.getElementById('newPunchOut').value;
+            if(!date || !empId || !pin || !pout) return alert('Fill all fields to add a punch!');
+            await fetch('/api/punches/add', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({employee_id: empId, date, punch_in: pin, punch_out: pout})});
+            document.getElementById('newPunchIn').value = '';
+            document.getElementById('newPunchOut').value = '';
+            loadPunches();
+        }
+        async function editPunchPrompt(id, emp_id, oldDate, oldIn, oldOut) {
+            const date = prompt("Edit Date (YYYY-MM-DD):", oldDate);
+            if (!date) return;
+            const pin = prompt("Edit Punch In (HH:MM):", oldIn);
+            if (!pin) return;
+            const pout = prompt("Edit Punch Out (HH:MM):", oldOut);
+            if (!pout) return;
+
+            await fetch('/api/punches/edit', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({id, employee_id: emp_id, date, punch_in: pin, punch_out: pout})});
+            loadPunches();
+        }
+        async function deletePunch(id) {
+            if(!confirm('Are you sure you want to permanently delete this punch?')) return;
+            await fetch('/api/punches/delete', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({id})});
+            loadPunches();
+        }
+        async function fixPunch(id) {            const val = document.getElementById('fix_'+id).value;
+            if(!val) return alert('Enter a time!');
+            await fetch('/api/punches/fix', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({id, punch_out: val, reason: 'Manager Override'})});
+            loadPunches();
+        }
+        async function ackPenalty(id) {
+            await fetch('/api/punches/fix', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({id, punch_out: 'N/A', reason: 'Penalty Acknowledged'})}); // Reuse fix endpoint
+            loadPunches();
+        }
+        async function apprPunch(id) {
+             await fetch('/api/punches/fix', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({id, punch_out: null, reason: 'Approved'})}); // Hacky reuse
+             loadPunches();
+        }
+
+        async function buildScheduleGrid() {
+            const emps = await (await fetch('/api/employees')).json();
+            const c = document.getElementById('scheduleGridContainer');
+            let html = '<div class="sch-grid"><div class="sch-cell sch-header">Employee</div>';
+            const days = ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'];
+            days.forEach(d => html += `<div class="sch-cell sch-header">${d}</div>`);
+            
+            emps.forEach(e => {
+                html += `<div class="sch-cell sch-emp">${e.first_name} ${e.last_name}</div>`;
+                days.forEach(d => html += `<div class="sch-cell"><input type="text" class="sch-input" placeholder="00:00-00:00" oninput="calcLabor()"></div>`);
+            });
+            html += '</div>';
+            c.innerHTML = html;
+        }
+
+        function calcLabor() {
+            let hrs = 0;
+            document.querySelectorAll('.sch-input').forEach(inp => {
+                if(inp.value.includes('-')) {
+                    try {
+                        let parts = inp.value.split('-');
+                        let parseT = t => {
+                            let pm = t.toLowerCase().includes('p');
+                            let am = t.toLowerCase().includes('a');
+                            t = t.replace(/[^0-9:]/g, '');
+                            let [h, m] = t.includes(':') ? t.split(':') : [t, '0'];
+                            h = parseInt(h); m = parseInt(m) || 0;
+                            if(pm && h < 12) h += 12;
+                            if(am && h === 12) h = 0;
+                            return h + m/60;
+                        };
+                        let s = parseT(parts[0]);
+                        let e = parseT(parts[1]);
+                        if(!isNaN(s) && !isNaN(e)) {
+                            if(e <= s && e < 12) e += 12; // Auto-assume PM for end time if smaller
+                            let diff = e - s;
+                            if(diff < 0) diff += 24;
+                            hrs += diff;
+                        }
+                    } catch(err) {}
+                }
+            });
+            const span = document.getElementById('schHrs');
+            span.textContent = hrs.toFixed(2);
+            if(hrs > 118) document.getElementById('laborBox').classList.add('over');
+            else document.getElementById('laborBox').classList.remove('over');
+        }
+
+        // PRICE CHANGES
+        let priceIds = [];
+        async function loadPrices() {
+            const data = await (await fetch('/api/prices')).json();
+            const tb = document.querySelector('#pricesTable tbody'); tb.innerHTML = '';
+            priceIds = [];
+            data.forEach(d => {
+                priceIds.push(d.id);
+                tb.innerHTML += `<tr><td>${d.sku}</td><td>${d.name}</td><td>$${d.old_price.toFixed(2)}</td><td style="color:#D8000C; font-weight:bold;">$${d.new_price.toFixed(2)}</td></tr>`;
+            });
+            document.getElementById('priceCount').textContent = `${data.length} items pending`;
+        }
+        async function commitPrices() {
+            if(priceIds.length === 0) return alert('No prices to commit.');
+            await fetch('/api/prices/commit', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({ids: priceIds})});
+            alert('Prices successfully transmitted to POS lanes.');
+            loadPrices();
+        }
+
+        // OTHER (Minified for brevity)
+        async function loadVendorDeliveries() { const data = await (await fetch('/api/deliveries')).json(); const tb = document.querySelector('#vendorTable tbody'); tb.innerHTML = ''; data.forEach(d => tb.innerHTML += `<tr><td>${d.id}</td><td>${d.vendor_name}</td><td>${d.delivery_date}</td><td><b>${d.status}</b></td><td><button class="action-btn" onclick="apprDrop(${d.id})">Approve</button></td></tr>`); }
+        async function apprDrop(id) { await fetch('/api/deliveries/approve', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({id})}); loadVendorDeliveries(); }
+        async function loadInventory() { const data = await (await fetch('/api/inventory')).json(); const tb = document.querySelector('#inventoryTable tbody'); tb.innerHTML = ''; data.forEach(d => tb.innerHTML += `<tr><td>${d.sku}</td><td>${d.name}</td><td>${d.department}</td><td><b>${d.quantity}</b></td><td>$${d.price.toFixed(2)}</td></tr>`); }
+        async function loadAdminLogs() { const data = await (await fetch('/api/admin/logs')).json(); const tb = document.querySelector('#adminLogsTable tbody'); tb.innerHTML = ''; data.forEach(d => tb.innerHTML += `<tr><td>${d.id}</td><td>${d.user_eid}</td><td>${d.action}</td><td>${d.timestamp}</td></tr>`); }
+        async function loadSales() { const data = await (await fetch('/api/reports/sales')).json(); const tb = document.querySelector('#salesTable tbody'); tb.innerHTML = ''; data.forEach(d => tb.innerHTML += `<tr><td>${d.date}</td><td>$${d.net_sales.toFixed(2)}</td><td>${d.transaction_count}</td><td>$${d.cash_over_short.toFixed(2)}</td></tr>`); }
+        async function loadEmployees() { const data = await (await fetch('/api/employees')).json(); const tb = document.querySelector('#empTable tbody'); tb.innerHTML = ''; data.forEach(d => tb.innerHTML += `<tr><td>${d.id}</td><td>${d.first_name} ${d.last_name}</td><td>${d.position}</td><td>$${d.wage.toFixed(2)}</td><td><b>${d.status}</b></td></tr>`); }
+        
+        function calcMoney() { let total = 0; document.querySelectorAll('.money-input').forEach(input => { const rowTotal = (parseInt(input.value) || 0) * parseFloat(input.getAttribute('data-val')); input.parentElement.nextElementSibling.textContent = '$' + rowTotal.toFixed(2); total += rowTotal; }); document.getElementById('moneyTotal').textContent = '$' + total.toFixed(2); }
+
+    </script>
+</body>
+</html>

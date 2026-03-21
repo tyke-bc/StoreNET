@@ -1,0 +1,15 @@
+{
+  "name": "storenet-web",
+  "version": "1.0.0",
+  "description": "StoreNET PC Web Interface",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "dependencies": {
+    "bcrypt": "^6.0.0",
+    "express": "^4.18.2",
+    "express-session": "^1.19.0",
+    "mysql2": "^3.20.0"
+  }
+}

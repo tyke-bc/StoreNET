@@ -1,0 +1,45 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>StoreNET Login</title>
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+    <div class="login-container">
+        <header class="logo-header">
+            <div class="logo-box">
+                <span class="logo-text-black">Store</span><span class="logo-text-yellow">NET</span>
+            </div>
+        </header>
+        
+        <main class="login-main">
+            <h2 class="system-title">StoreNET PC Access</h2>
+            
+            <form id="loginForm" class="login-form">
+                <div class="input-group">
+                    <label for="username">Username / EID</label>
+                    <input type="text" id="username" name="username" required autofocus autocomplete="off">
+                </div>
+                
+                <div class="input-group">
+                    <label for="password">Password</label>
+                    <input type="password" id="password" name="password" required>
+                </div>
+                
+                <div class="button-group">
+                    <button type="submit" class="btn-primary">Login</button>
+                    <button type="button" class="btn-primary" id="clearBtn">Clear</button>
+                </div>
+            </form>
+
+            <div class="system-messages" id="systemMessage">
+                Please enter your credentials to access the system.
+            </div>
+        </main>
+    </div>
+    
+    <script src="script.js"></script>
+</body>
+</html>
