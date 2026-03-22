@@ -2,7 +2,7 @@ const express = require('express');
 const path = require('path');
 const session = require('express-session');
 const bcrypt = require('bcrypt');
-const { pool, generateDailyData } = require('./database');
+const { pool, initDatabase, generateDailyData } = require('./database');
 
 const app = express();
 const PORT = 3000;
@@ -40,6 +40,7 @@ app.get('/api/system/date', (req, res) => {
 // INITIALIZE TODAY'S DATA ON STARTUP (wrapped in async)
 (async () => {
     try {
+        await initDatabase();
         await generateDailyData(systemDate.toISOString().split('T')[0]);
     } catch (e) {
         console.error("Initial data gen failed:", e.message);
@@ -68,6 +69,7 @@ app.post('/api/login', async (req, res) => {
             return res.status(401).json({ success: false, message: 'Invalid EID or Password' });
         }
     } catch (err) {
+        console.error("Login Error:", err);
         return res.status(500).json({ success: false, message: 'Database error' });
     }
 });
@@ -204,6 +206,19 @@ app.post('/api/prices/commit', async (req, res) => {
     }
     await pool.query(`UPDATE price_changes SET status = "Complete" WHERE id IN (${ids.map(()=>'?').join(',')})`, ids);
     await pool.query('INSERT INTO audit_logs (user_eid, action, timestamp) VALUES (?, ?, ?)', [req.session.eid || 'System', `Committed ${ids.length} price changes.`, new Date()]);
+    res.json({success: true});
+});
+
+// REGISTER ADMIN APIS
+app.get('/api/pos/logs', async (req, res) => {
+    const [rows] = await pool.query('SELECT * FROM transaction_logs ORDER BY id DESC LIMIT 100');
+    res.json(rows);
+});
+app.post('/api/pos/users', async (req, res) => {
+    const { eid, name, pin, role } = req.body;
+    // Update if exists, else insert
+    await pool.query('INSERT INTO users (eid, name, pin, role) VALUES (?, ?, ?, ?) ON DUPLICATE KEY UPDATE name = VALUES(name), pin = VALUES(pin), role = VALUES(role)', [eid, name, pin, role]);
+    await pool.query('INSERT INTO audit_logs (user_eid, action, timestamp) VALUES (?, ?, ?)', [req.session.eid || 'System', `Modified register access for ${eid}`, new Date()]);
     res.json({success: true});
 });
 

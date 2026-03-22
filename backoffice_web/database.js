@@ -34,6 +34,23 @@ async function initDatabase() {
             role VARCHAR(20) DEFAULT 'manager'
         )`);
 
+        // PATCH: Ensure existing users table has new columns if it was created by the POS earlier
+        const [columns] = await connection.query('SHOW COLUMNS FROM users');
+        const colNames = columns.map(c => c.Field);
+        if (!colNames.includes('username')) {
+            await connection.query('ALTER TABLE users ADD COLUMN username VARCHAR(50) UNIQUE AFTER name');
+        }
+        if (!colNames.includes('password')) {
+            await connection.query('ALTER TABLE users ADD COLUMN password VARCHAR(255) AFTER username');
+        }
+        if (!colNames.includes('is_first_login')) {
+            await connection.query('ALTER TABLE users ADD COLUMN is_first_login TINYINT(1) DEFAULT 1 AFTER pin');
+        }
+        if (!colNames.includes('id')) {
+            // This is trickier, but we'll add it if missing
+            await connection.query('ALTER TABLE users ADD COLUMN id INT AUTO_INCREMENT UNIQUE FIRST');
+        }
+
         await connection.query(`CREATE TABLE IF NOT EXISTS employees (
             id INT AUTO_INCREMENT PRIMARY KEY,
             first_name VARCHAR(100),
@@ -147,12 +164,17 @@ async function initDatabase() {
             duration VARCHAR(50)
         )`);
 
-        // Seed Users
-        const [users] = await connection.query('SELECT * FROM users WHERE eid = ?', ['3756772']);
-        if (users.length === 0) {
+        // Seed or Patch Users
+        const [existingUsers] = await connection.query('SELECT * FROM users WHERE eid = ?', ['3756772']);
+        if (existingUsers.length === 0) {
             const hashedPassword = await bcrypt.hash('3063', 10);
             await connection.query('INSERT INTO users (eid, name, username, password, pin, is_first_login, role) VALUES (?, ?, ?, ?, ?, ?, ?)', 
                 ['3756772', 'Tyke', '3063', hashedPassword, '3063', 0, 'admin']);
+        } else if (!existingUsers[0].password) {
+            // PATCH: If user exists from POS but has no web password yet
+            const hashedPassword = await bcrypt.hash('3063', 10);
+            await connection.query('UPDATE users SET username = ?, password = ?, is_first_login = 0 WHERE eid = ?', 
+                ['3063', hashedPassword, '3756772']);
         }
 
         // Seed Employees
@@ -279,7 +301,7 @@ async function generateDailyData(targetDateStr) {
         ];
         if(Math.random() < 0.7) {
             const m = messages[Math.floor(Math.random() * messages.length)];
-            await connection.query('INSERT INTO messages (sender, subject, body, date, \`read\`) VALUES (?, ?, ?, ?, ?)', [m[0], m[1], m[2], targetDateStr, 0]);
+            await connection.query('INSERT INTO messages (sender, subject, body, date, `read`) VALUES (?, ?, ?, ?, ?)', [m[0], m[1], m[2], targetDateStr, 0]);
         }
 
     } finally {
@@ -287,6 +309,4 @@ async function generateDailyData(targetDateStr) {
     }
 }
 
-initDatabase();
-
-module.exports = { pool, generateDailyData };
+module.exports = { pool, initDatabase, generateDailyData };

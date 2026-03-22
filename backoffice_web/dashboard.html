@@ -54,6 +54,9 @@
                 <button class="grid-btn" onclick="openMenu('reports')">
                     <span class="btn-icon">📈</span><span class="btn-label">Store Analytics</span>
                 </button>
+                <button class="grid-btn" style="background-color: #004b91;" onclick="openMenu('pos-admin')">
+                    <span class="btn-icon">📠</span><span class="btn-label">Register Admin</span>
+                </button>
                 <button class="grid-btn" style="background-color: #333; border-color: #000;" onclick="openMenu('admin')">
                     <span class="btn-icon">⚙️</span><span class="btn-label">System Admin</span>
                 </button>
@@ -67,6 +70,41 @@
             <div class="footer-status">SYSTEM READY - CONNECTED TO HEADQUARTERS</div>
             <div class="footer-version">v3.0.0-ENTERPRISE</div>
         </footer>
+    </div>
+
+    <!-- POS ADMIN MODAL -->
+    <div id="posAdminModal" class="modal">
+        <div class="modal-content xtra-wide">
+            <div class="modal-header"><h3>Register Admin & Transaction Logs</h3><span class="close-btn" onclick="closeModal('posAdminModal')">&times;</span></div>
+            <div class="modal-body">
+                <div class="tab-bar">
+                    <button class="tab-btn active" onclick="switchTab(this, 'pos-logs'); loadPosLogs();">Live Transaction Feed</button>
+                    <button class="tab-btn" onclick="switchTab(this, 'pos-users'); loadPosUsers();">Register User Access</button>
+                </div>
+                <div id="pos-logs" class="tab-section active">
+                    <table class="data-table" id="posLogsTable">
+                        <thead><tr><th>ID</th><th>EID</th><th>Action</th><th>SKU</th><th>Timestamp</th></tr></thead>
+                        <tbody></tbody>
+                    </table>
+                </div>
+                <div id="pos-users" class="tab-section">
+                    <div style="margin-bottom: 15px; background: #f9f9f9; padding: 15px; border: 1px solid #ddd;">
+                        <h4>Add/Edit Register User</h4>
+                        <div style="display: flex; gap: 10px; margin-top: 10px;">
+                            <input type="text" id="posUserEid" placeholder="EID (e.g. 123456)" class="sch-input" style="width:120px;">
+                            <input type="text" id="posUserName" placeholder="Full Name" class="sch-input">
+                            <input type="text" id="posUserPin" placeholder="PIN (4 digits)" class="sch-input" style="width:100px;">
+                            <select id="posUserRole" class="sch-input"><option value="SA">Sales Associate</option><option value="LSA">Lead Assoc</option><option value="SM">Store Manager</option></select>
+                            <button class="action-btn" onclick="savePosUser()">Save User</button>
+                        </div>
+                    </div>
+                    <table class="data-table" id="posUsersTable">
+                        <thead><tr><th>EID</th><th>Name</th><th>PIN</th><th>Role</th><th>Action</th></tr></thead>
+                        <tbody></tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
     </div>
 
     <!-- TASKS MODAL -->
@@ -247,7 +285,7 @@
         </div>
     </div>
     
-    <!-- REPORTS & ADMIN BLOCKS OMITTED FOR BREVITY, KEPT SAME LOGIC -->
+    <!-- REPORTS & ADMIN BLOCKS -->
     <div id="adminModal" class="modal"><div class="modal-content wide"><div class="modal-header"><h3>System Admin</h3><span class="close-btn" onclick="closeModal('adminModal')">&times;</span></div><div class="modal-body"><table class="data-table" id="adminLogsTable"><thead><tr><th>ID</th><th>User EID</th><th>Action</th><th>Timestamp</th></tr></thead><tbody></tbody></table></div></div></div>
     <div id="reportsModal" class="modal"><div class="modal-content wide"><div class="modal-header"><h3>Analytics</h3><span class="close-btn" onclick="closeModal('reportsModal')">&times;</span></div><div class="modal-body"><table class="data-table" id="salesTable"><thead><tr><th>Date</th><th>Net Sales</th><th>Transactions</th><th>Over/Short</th></tr></thead><tbody></tbody></table></div></div></div>
 
@@ -286,6 +324,7 @@
             else if (menu === 'inventory') { document.getElementById('inventoryModal').style.display = 'flex'; loadVendorDeliveries(); }
             else if (menu === 'admin') { document.getElementById('adminModal').style.display = 'flex'; loadAdminLogs(); }
             else if (menu === 'reports') { document.getElementById('reportsModal').style.display = 'flex'; loadSales(); }
+            else if (menu === 'pos-admin') { document.getElementById('posAdminModal').style.display = 'flex'; loadPosLogs(); }
         }
         function closeModal(id) { document.getElementById(id).style.display = 'none'; }
         window.onclick = function(e) { if (e.target.classList.contains('modal')) e.target.style.display = "none"; }
@@ -471,6 +510,50 @@
             await fetch('/api/prices/commit', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({ids: priceIds})});
             alert('Prices successfully transmitted to POS lanes.');
             loadPrices();
+        }
+
+        // POS REGISTER ADMIN
+        async function loadPosLogs() {
+            const data = await (await fetch('/api/pos/logs')).json();
+            const tb = document.querySelector('#posLogsTable tbody'); tb.innerHTML = '';
+            data.forEach(d => {
+                tb.innerHTML += `<tr><td>${d.id}</td><td>${d.eid}</td><td>${d.action}</td><td>${d.upc || '-'}</td><td>${new Date(d.timestamp).toLocaleString()}</td></tr>`;
+            });
+        }
+        async function loadPosUsers() {
+            const data = await (await fetch('/api/admin/users')).json();
+            const tb = document.querySelector('#posUsersTable tbody'); tb.innerHTML = '';
+            data.forEach(d => {
+                tb.innerHTML += `<tr>
+                    <td>${d.eid}</td>
+                    <td>${d.name || d.username || '-'}</td>
+                    <td>${d.pin || '****'}</td>
+                    <td>${d.role}</td>
+                    <td><button class="action-btn" style="background:#f39c12;" onclick="editPosUser('${d.eid}','${d.name}','${d.pin}','${d.role}')">Edit</button></td>
+                </tr>`;
+            });
+        }
+        async function savePosUser() {
+            const eid = document.getElementById('posUserEid').value;
+            const name = document.getElementById('posUserName').value;
+            const pin = document.getElementById('posUserPin').value;
+            const role = document.getElementById('posUserRole').value;
+            if(!eid || !name || !pin) return alert('Fill all fields!');
+            await fetch('/api/pos/users', {
+                method: 'POST', 
+                headers: {'Content-Type':'application/json'}, 
+                body: JSON.stringify({eid, name, pin, role})
+            });
+            document.getElementById('posUserEid').value = '';
+            document.getElementById('posUserName').value = '';
+            document.getElementById('posUserPin').value = '';
+            loadPosUsers();
+        }
+        function editPosUser(eid, name, pin, role) {
+            document.getElementById('posUserEid').value = eid;
+            document.getElementById('posUserName').value = name;
+            document.getElementById('posUserPin').value = pin;
+            document.getElementById('posUserRole').value = role;
         }
 
         // OTHER (Minified for brevity)
