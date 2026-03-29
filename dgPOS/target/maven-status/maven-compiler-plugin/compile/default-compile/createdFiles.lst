@@ -1,0 +1,10 @@
+com\dgpos\Main.class
+com\dgpos\DatabaseManager$ScannedItemData.class
+com\dgpos\DatabaseManager$UserData.class
+com\dgpos\DatabaseManager$ReceiptData.class
+com\dgpos\PosLogin.class
+com\dgpos\DatabaseManager.class
+com\dgpos\MainTransactionScreen$ScannedItem.class
+com\dgpos\PosLogin$State.class
+com\dgpos\PrinterService.class
+com\dgpos\MainTransactionScreen.class

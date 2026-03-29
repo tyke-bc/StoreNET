@@ -20,7 +20,7 @@ import androidx.compose.ui.window.Dialog
 import com.github.tyke_bc.hht.ui.theme.*
 
 @Composable
-fun LoginScreen(onLoginSuccess: () -> Unit) {
+fun LoginScreen(onLoginSuccess: (String) -> Unit) {
     var username by remember { mutableStateOf("") }
     var password by remember { mutableStateOf("") }
     var isPesLogin by remember { mutableStateOf(false) }
@@ -151,7 +151,7 @@ fun LoginScreen(onLoginSuccess: () -> Unit) {
                         Spacer(modifier = Modifier.height(8.dp))
 
                         Button(
-                            onClick = onLoginSuccess,
+                            onClick = { onLoginSuccess(storeNumber) },
                             modifier = Modifier.fillMaxWidth().height(48.dp),
                             shape = RoundedCornerShape(4.dp),
                             colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFE0E0E0)),

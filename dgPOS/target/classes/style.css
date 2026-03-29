@@ -1,0 +1,238 @@
+/* 
+ * dgpOS High-Fidelity Toshiba-style POS Theme 
+ */
+
+.root-pane {
+    -fx-background-color: linear-gradient(to bottom, #2b323c, #1f242b);
+}
+
+/* --- Status Bar --- */
+.bottom-bar {
+    -fx-background-color: linear-gradient(to bottom, #111418, #0a0c0f);
+    -fx-border-color: #3b4554;
+    -fx-border-width: 2 0 0 0;
+    -fx-padding: 8 20 8 20;
+}
+
+.status-text {
+    -fx-text-fill: #a0aec0;
+    -fx-font-size: 16px;
+    -fx-font-family: "Segoe UI", Tahoma, sans-serif;
+    -fx-font-weight: bold;
+}
+
+/* --- Login Screen Elements --- */
+.banner-text {
+    -fx-text-fill: #eab308;
+    -fx-font-size: 50px;
+    -fx-font-weight: 900;
+    -fx-font-family: "Segoe UI Black", Tahoma, sans-serif;
+    -fx-effect: dropshadow(three-pass-box, rgba(0,0,0,0.8), 10, 0.0, 0, 5);
+}
+
+.warning-text {
+    -fx-text-fill: #111418;
+    -fx-background-color: #eab308;
+    -fx-font-size: 20px;
+    -fx-font-weight: bold;
+    -fx-font-family: "Segoe UI", Tahoma, sans-serif;
+    -fx-padding: 10 25 10 25;
+    -fx-background-radius: 6;
+    -fx-border-color: #ca8a04;
+    -fx-border-width: 2;
+    -fx-border-radius: 6;
+    -fx-effect: dropshadow(three-pass-box, rgba(0,0,0,0.5), 5, 0.0, 0, 3);
+}
+
+.employee-input {
+    -fx-font-size: 28px;
+    -fx-font-weight: bold;
+    -fx-alignment: center;
+    -fx-background-radius: 6;
+    -fx-padding: 12;
+    -fx-border-color: #3b82f6;
+    -fx-border-width: 3;
+    -fx-border-radius: 6;
+    -fx-background-color: #f8fafc;
+    -fx-text-fill: #0f172a;
+}
+
+.employee-input:focused {
+    -fx-border-color: #eab308;
+    -fx-background-color: #ffffff;
+}
+
+/* Global Button Styling */
+.numpad-btn {
+    -fx-font-size: 18px;
+    -fx-font-weight: bold;
+    -fx-font-family: "Segoe UI", Tahoma, sans-serif;
+    -fx-background-radius: 6;
+    -fx-border-radius: 6;
+    -fx-cursor: hand;
+    -fx-effect: dropshadow(three-pass-box, rgba(0,0,0,0.6), 4, 0.0, 0, 3);
+}
+
+.numpad-btn:pressed {
+    -fx-translate-y: 2px;
+    -fx-effect: dropshadow(three-pass-box, rgba(0,0,0,0.2), 2, 0.0, 0, 1);
+}
+
+/* White keys, black text (Numpad) */
+.number-btn {
+    -fx-background-color: linear-gradient(to bottom, #f8fafc, #cbd5e1);
+    -fx-text-fill: #0f172a;
+    -fx-border-color: #94a3b8;
+    -fx-border-width: 1;
+    -fx-font-size: 28px;
+}
+.number-btn:pressed {
+    -fx-background-color: linear-gradient(to bottom, #cbd5e1, #94a3b8);
+}
+
+/* Default Action Keys (Dark Grey) */
+.action-btn {
+    -fx-background-color: linear-gradient(to bottom, #475569, #334155);
+    -fx-text-fill: #f8fafc;
+    -fx-border-color: #1e293b;
+    -fx-border-width: 1;
+}
+.action-btn:pressed {
+    -fx-background-color: linear-gradient(to bottom, #334155, #1e293b);
+}
+
+/* Warning/Void Keys (Orange/Yellow) */
+.void-btn {
+    -fx-background-color: linear-gradient(to bottom, #f59e0b, #d97706);
+    -fx-text-fill: #ffffff;
+    -fx-border-color: #b45309;
+    -fx-border-width: 1;
+}
+.void-btn:pressed {
+    -fx-background-color: linear-gradient(to bottom, #d97706, #b45309);
+}
+
+/* Danger Keys (Red) */
+.danger-btn {
+    -fx-background-color: linear-gradient(to bottom, #ef4444, #dc2626);
+    -fx-text-fill: #ffffff;
+    -fx-border-color: #991b1b;
+    -fx-border-width: 1;
+}
+.danger-btn:pressed {
+    -fx-background-color: linear-gradient(to bottom, #dc2626, #991b1b);
+}
+
+/* Safe/Enter Keys (Green) */
+.enter-button, .tender-cash-btn {
+    -fx-background-color: linear-gradient(to bottom, #10b981, #059669);
+    -fx-text-fill: #ffffff;
+    -fx-border-color: #065f46;
+    -fx-border-width: 1;
+}
+.enter-button:pressed, .tender-cash-btn:pressed {
+    -fx-background-color: linear-gradient(to bottom, #059669, #065f46);
+}
+
+/* Secondary Tender Keys (Blue) */
+.tender-card-btn {
+    -fx-background-color: linear-gradient(to bottom, #3b82f6, #2563eb);
+    -fx-text-fill: #ffffff;
+    -fx-border-color: #1e40af;
+    -fx-border-width: 1;
+}
+.tender-card-btn:pressed {
+    -fx-background-color: linear-gradient(to bottom, #2563eb, #1e40af);
+}
+
+/* Misc/Info Keys (Light Blue) */
+.info-btn {
+    -fx-background-color: linear-gradient(to bottom, #0ea5e9, #0284c7);
+    -fx-text-fill: #ffffff;
+    -fx-border-color: #0369a1;
+    -fx-border-width: 1;
+}
+.info-btn:pressed {
+    -fx-background-color: linear-gradient(to bottom, #0284c7, #0369a1);
+}
+
+/* --- Receipt Tape & Table Styling --- */
+.receipt-tape {
+    -fx-background-color: #fdfdfd;
+    -fx-border-color: #d1d5db;
+    -fx-border-width: 0 2 0 0;
+    -fx-effect: dropshadow(three-pass-box, rgba(0,0,0,0.8), 15, 0.0, 5, 0);
+}
+
+/* Make TableView look like a printed receipt */
+.receipt-table {
+    -fx-background-color: transparent;
+    -fx-border-color: transparent;
+    -fx-font-family: "Courier New", monospace;
+    -fx-font-size: 16px;
+    -fx-font-weight: bold;
+}
+
+/* Hide table borders and headers completely */
+.receipt-table .column-header-background {
+    -fx-background-color: transparent;
+    -fx-pref-height: 0;
+    -fx-max-height: 0;
+    -fx-min-height: 0;
+    -fx-padding: 0;
+}
+.receipt-table .column-header {
+    -fx-background-color: transparent;
+    -fx-border-color: transparent;
+}
+.receipt-table .filler {
+    -fx-background-color: transparent;
+}
+
+/* Row styling - no borders, no alternating colors, just text on paper */
+.receipt-table .table-row-cell {
+    -fx-background-color: transparent;
+    -fx-border-color: transparent;
+    -fx-table-cell-border-color: transparent;
+    -fx-padding: 2 5 2 5;
+}
+.receipt-table .table-row-cell:empty {
+    -fx-background-color: transparent;
+}
+.receipt-table .table-row-cell:selected {
+    -fx-background-color: #e2e8f0; /* Subtle selection color */
+    -fx-text-fill: #000000;
+}
+
+.receipt-table .table-cell {
+    -fx-text-fill: #1e293b;
+    -fx-border-color: transparent;
+    -fx-alignment: center-left;
+}
+
+/* Align price and qty correctly */
+.col-qty, .col-price {
+    -fx-alignment: center-right !important;
+}
+
+/* Totals Block styling */
+.totals-block {
+    -fx-background-color: #fdfdfd;
+    -fx-border-color: #94a3b8 transparent transparent transparent;
+    -fx-border-style: dashed;
+    -fx-border-width: 2 0 0 0;
+}
+
+.subtotal-label, .subtotal-amount {
+    -fx-font-size: 16px;
+    -fx-font-family: "Courier New", monospace;
+    -fx-font-weight: bold;
+    -fx-text-fill: #475569;
+}
+
+.total-label, .total-amount {
+    -fx-font-size: 32px;
+    -fx-font-family: "Courier New", monospace;
+    -fx-font-weight: 900;
+    -fx-text-fill: #0f172a;
+}
