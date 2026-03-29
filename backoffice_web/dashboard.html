@@ -468,6 +468,36 @@
             });
         }
 
+        let masterInventoryCache = [];
+        async function openPogAddItemModal() {
+            masterInventoryCache = await apiFetch('/api/inventory/master');
+            renderPogMasterList(masterInventoryCache);
+            document.getElementById('addPogItemModal').style.display = 'flex';
+            document.getElementById('pogItemSearch').value = '';
+            document.getElementById('pogItemSearch').focus();
+        }
+
+        function renderPogMasterList(items) {
+            const tb = document.querySelector('#pogMasterSelectTable tbody');
+            tb.innerHTML = '';
+            items.forEach(i => {
+                tb.innerHTML += `<tr>
+                    <td>${i.sku}</td><td>${i.name}</td>
+                    <td><button class="primary" onclick="addMasterItemToPog('${i.sku}')">Add</button></td>
+                </tr>`;
+            });
+        }
+
+        function filterPogMasterItems() {
+            const search = document.getElementById('pogItemSearch').value.toLowerCase();
+            const filtered = masterInventoryCache.filter(i => 
+                (i.sku && i.sku.toLowerCase().includes(search)) || 
+                (i.name && i.name.toLowerCase().includes(search)) ||
+                (i.upc && i.upc.toLowerCase().includes(search))
+            );
+            renderPogMasterList(filtered);
+        }
+
         async function addMasterItemToPog(sku) {
             const section = document.getElementById('pogSectionSelect').value;
             const shelf = document.getElementById('pogShelfSelect').value;
