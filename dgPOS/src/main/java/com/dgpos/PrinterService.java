@@ -72,7 +72,8 @@ public class PrinterService {
                 String priceStr = String.format("$%.2f", price);
                 if (origPriceTotal > price && price >= 0) { // Don't show savings on returns
                     double savings = origPriceTotal - price;
-                    String saveStr = String.format("SAVING $%.2f!", savings);
+                    double percentOff = (savings / origPriceTotal) * 100.0;
+                    String saveStr = String.format("Was $%.2f | %.0f%% OFF", origPriceTotal, percentOff);
                     String line = String.format("  %-20s %9s\n", saveStr, priceStr);
                     baos.write(line.getBytes());
                 } else {

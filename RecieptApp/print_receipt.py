@@ -46,14 +46,15 @@ def get_receipt_data():
     data += b"SALE TRANSACTION\n" + BOLD_OFF + b"\n"
     
     data += LEFT
-    data += b"S CONAIR BRUSH-CUSH 74108800541      $5.75\n"
+    data += b"S CONAIR BRUSH-CUSH 74108800541      $2.80\n"
+    data += b"  Was $5.75 | 51% OFF\n"
     data += b"S MONSTER VICE GUAV 70847898146      $2.80\n"
     data += b"\n"
     
     data += RIGHT
-    data += b"Tax:  $8.55 @ 5.5%   $0.47\n"
-    data += BOLD_ON + b"Balance to pay       $9.02\n" + BOLD_OFF
-    data += b"MasterCard           $9.02\n\n"
+    data += b"Tax:  $5.60 @ 5.5%   $0.31\n"
+    data += BOLD_ON + b"Balance to pay       $5.91\n" + BOLD_OFF
+    data += b"MasterCard           $5.91\n\n"
     
     data += LEFT
     data += b"US DEBIT ************1234\n"
@@ -161,7 +162,7 @@ def image_to_escpos(img):
             
     return header + bytes(raster_data)
 
-def get_sticker_data(item_name="Heartland Farm - 24lb", item_sku="2082-9801", item_upc="542992475853"):
+def get_sticker_data(item_name="Heartland Farm - 24lb", item_sku="2082-9801", item_upc="542992475853", location="N/A", faces="F1", department="GENERAL", pog_info=""):
     if not PILLOW_AVAILABLE:
         print("Error: Pillow or python-barcode is not installed.")
         print("Please run: pip install pillow python-barcode")
@@ -234,18 +235,16 @@ def get_sticker_data(item_name="Heartland Farm - 24lb", item_sku="2082-9801", it
     # 00-71-12-01-01
     draw.text((130, 45), "00-71-12-01-01", font=font_medium, fill=0)
     
-    # 5429924 - 75853
-    draw.text((10, 90), "5429924 - 75853", font=font_small, fill=0)
+    # 5429924 - 75853 -> Replaced with SKU
+    draw.text((10, 90), f"SKU - {item_sku}", font=font_small, fill=0)
     
     # Current Date (MM/DD/YY)
     current_date = datetime.now().strftime("%m/%d/%y")
     draw.text((440, 90), current_date, font=font_small, fill=0)
     
-    # Barcode 1 (Switching to Code 128)
+    # Barcode 1 (Switching to Code 128) - Now uses SKU to match the text above it
     Code128 = barcode.get_barcode_class('code128')
-    # Use UPC for barcode 1 if valid length, else pad/truncate or just use SKU if upc is missing
-    bc_str = item_upc if (item_upc and item_upc != "null") else item_sku
-    if not bc_str: bc_str = "000000000000"
+    bc_str = item_sku if item_sku else "000000"
     
     try:
         bc1 = Code128(bc_str, writer=ImageWriter())
@@ -271,12 +270,15 @@ def get_sticker_data(item_name="Heartland Farm - 24lb", item_sku="2082-9801", it
     # SKU
     draw.text((10, 235), f"SKU: {item_sku}", font=font_small, fill=0)
     
-    # 15998 DOG FOOD...
-    draw.text((10, 262), "15998  DOG FOOD-PET GOODS-R", font=font_small, fill=0)
+    # Department / POG Info
+    # Priority: 1. POG Info, 2. Department, 3. GENERAL
+    display_pog_label = pog_info if (pog_info and pog_info.strip()) else (department if department else "GENERAL")
+    display_pog_label = display_pog_label[:35]
+    draw.text((10, 262), display_pog_label, font=font_small, fill=0)
     
-    # A-2 R
-    draw.text((10, 295), "A-2", font=font_small, fill=0)
-    draw.text((10, 315), "F1", font=font_small, fill=0)
+    # Location and Faces
+    draw.text((10, 295), str(location), font=font_small, fill=0)
+    draw.text((10, 315), str(faces), font=font_small, fill=0)
     draw.text((80, 305), "R", font=font_medium, fill=0)
     
     # Barcode 2 (18-digit padded UPC)
@@ -321,6 +323,10 @@ if __name__ == "__main__":
     parser.add_argument('--name', type=str, default="Heartland Farm - 24lb")
     parser.add_argument('--sku', type=str, default="2082-9801")
     parser.add_argument('--upc', type=str, default="542992475853")
+    parser.add_argument('--location', type=str, default="N/A")
+    parser.add_argument('--faces', type=str, default="F1")
+    parser.add_argument('--department', type=str, default="GENERAL")
+    parser.add_argument('--pog-info', type=str, default="")
     parser.add_argument('--print-sticker', action='store_true')
     parser.add_argument('--ip', type=str, default="192.168.0.179")
     parser.add_argument('--port', type=int, default=9100)
@@ -328,7 +334,7 @@ if __name__ == "__main__":
 
     if args.print_sticker:
         print(f"Printing Warehouse Sticker for {args.name}...")
-        send_to_printer(args.ip, args.port, get_sticker_data(args.name, args.sku, args.upc))
+        send_to_printer(args.ip, args.port, get_sticker_data(args.name, args.sku, args.upc, args.location, args.faces, args.department, args.pog_info))
         sys.exit(0)
 
     print("Select Option:")
@@ -347,6 +353,6 @@ if __name__ == "__main__":
         send_to_printer(args.ip, args.port, get_coupon_data())
     elif choice == "2":
         print("Printing Warehouse Sticker...")
-        send_to_printer(args.ip, args.port, get_sticker_data())
+        send_to_printer(args.ip, args.port, get_sticker_data(args.name, args.sku, args.upc, args.location, args.faces, args.department, args.pog_info))
     else:
         print("Invalid choice.")

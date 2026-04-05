@@ -90,7 +90,9 @@ public class DatabaseManager {
                 "ALTER TABLE inventory ADD COLUMN pog_date VARCHAR(20)",
                 "ALTER TABLE inventory ADD COLUMN location VARCHAR(50)",
                 "ALTER TABLE inventory ADD COLUMN faces VARCHAR(10) DEFAULT 'F1'",
-                "ALTER TABLE inventory ADD COLUMN pog_info VARCHAR(255)"
+                "ALTER TABLE inventory ADD COLUMN pog_info VARCHAR(255)",
+                "ALTER TABLE inventory ADD COLUMN reg_price DECIMAL(10,2) DEFAULT NULL",
+                "ALTER TABLE inventory ADD COLUMN sale_id VARCHAR(50) DEFAULT NULL"
             };
             for (String col : newCols) {
                 try {
@@ -232,17 +234,24 @@ public class DatabaseManager {
 
     public static ScannedItemData lookupItem(String input) {
         Connection conn = getConnection();
-        if (conn == null) return new ScannedItemData(input, "OFFLINE ITEM (" + input + ")", 0.00);
+        if (conn == null) return new ScannedItemData(input, "OFFLINE ITEM (" + input + ")", 0.00, 0.00, null);
         
-        try (PreparedStatement stmt = conn.prepareStatement("SELECT sku, upc, name, price FROM inventory WHERE upc = ? OR sku = ?")) {
+        try (PreparedStatement stmt = conn.prepareStatement("SELECT sku, upc, name, price, reg_price, sale_id FROM inventory WHERE upc = ? OR sku = ?")) {
             stmt.setString(1, input);
             stmt.setString(2, input);
             ResultSet rs = stmt.executeQuery();
             if (rs.next()) {
+                double price = rs.getDouble("price");
+                double regPrice = rs.getDouble("reg_price");
+                if (rs.wasNull()) {
+                    regPrice = price;
+                }
                 return new ScannedItemData(
                     rs.getString("upc"), 
                     rs.getString("name"), 
-                    rs.getDouble("price")
+                    price,
+                    regPrice,
+                    rs.getString("sale_id")
                 );
             } else if (input.length() == 12) {
                 // Fallback: If 12 digits scanned, try looking up just the first 11
@@ -251,17 +260,24 @@ public class DatabaseManager {
                 stmt.setString(2, shortUpc);
                 ResultSet rs2 = stmt.executeQuery();
                 if (rs2.next()) {
+                    double price = rs2.getDouble("price");
+                    double regPrice = rs2.getDouble("reg_price");
+                    if (rs2.wasNull()) {
+                        regPrice = price;
+                    }
                     return new ScannedItemData(
                         rs2.getString("upc"), 
                         rs2.getString("name"), 
-                        rs2.getDouble("price")
+                        price,
+                        regPrice,
+                        rs2.getString("sale_id")
                     );
                 }
             }
         } catch (Exception e) {
             System.err.println("Lookup failed: " + e.getMessage());
         }
-        return new ScannedItemData(input, "UNKNOWN: " + input, 0.00);
+        return new ScannedItemData(input, "UNKNOWN: " + input, 0.00, 0.00, null);
     }
 
     public static void logAction(String eid, String action, String upc) {
@@ -313,16 +329,35 @@ public class DatabaseManager {
             }
             try (PreparedStatement stmt = conn.prepareStatement(
                     "INSERT INTO receipt_items (receipt_id, upc, name, price, original_price, quantity) VALUES (?, ?, ?, ?, ?, ?)")) {
-                for (MainTransactionScreen.ScannedItem item : items) {
-                    stmt.setLong(1, receiptId);
-                    stmt.setString(2, item.getUpc());
-                    stmt.setString(3, item.getName());
-                    stmt.setDouble(4, item.getBasePrice());
-                    stmt.setDouble(5, item.getOriginalPrice());
-                    stmt.setInt(6, item.getQuantity());
-                    stmt.addBatch();
+                try (PreparedStatement updateStmt = conn.prepareStatement(
+                        "UPDATE inventory SET quantity = quantity - ? WHERE upc = ? OR sku = ?")) {
+                    for (MainTransactionScreen.ScannedItem item : items) {
+                        // Insert into receipt_items
+                        stmt.setLong(1, receiptId);
+                        stmt.setString(2, item.getUpc());
+                        stmt.setString(3, item.getName());
+                        stmt.setDouble(4, item.getBasePrice());
+                        stmt.setDouble(5, item.getOriginalPrice());
+                        stmt.setInt(6, item.getQuantity());
+                        stmt.addBatch();
+
+                        // Decrement inventory (Only if it's not a return, which has negative price in some modes, 
+                        // but ScannedItem.quantity is always positive. In MainTransactionScreen, 
+                        // isReturnMode sets price to negative but quantity to 1.
+                        // Actually, if it's a refund/return, we should INCREASE inventory.
+                        // ScannedItem name starts with "RTN: " or "REFUND: " for returns.
+                        int q = item.getQuantity();
+                        if (item.getName().startsWith("RTN: ") || item.getName().startsWith("REFUND: ")) {
+                            q = -q; // Negative decrement = increment
+                        }
+                        updateStmt.setInt(1, q);
+                        updateStmt.setString(2, item.getUpc());
+                        updateStmt.setString(3, item.getUpc());
+                        updateStmt.addBatch();
+                    }
+                    stmt.executeBatch();
+                    updateStmt.executeBatch();
                 }
-                stmt.executeBatch();
             }
         } catch (Exception e) {
             System.err.println("Finalize receipt failed: " + e.getMessage());
@@ -345,10 +380,15 @@ public class DatabaseManager {
                     itemStmt.setLong(1, id);
                     ResultSet irs = itemStmt.executeQuery();
                     while (irs.next()) {
+                        double price = irs.getDouble("price");
+                        double originalPrice = irs.getDouble("original_price");
+                        if (irs.wasNull()) originalPrice = price;
                         items.add(new ScannedItemData(
                             irs.getString("upc"),
                             irs.getString("name"),
-                            irs.getDouble("price")
+                            price,
+                            originalPrice,
+                            null
                         ));
                     }
                 }
@@ -376,9 +416,11 @@ public class DatabaseManager {
         public final String upc;
         public final String name;
         public final double price;
+        public final double regPrice;
+        public final String saleId;
 
-        public ScannedItemData(String upc, String name, double price) {
-            this.upc = upc; this.name = name; this.price = price;
+        public ScannedItemData(String upc, String name, double price, double regPrice, String saleId) {
+            this.upc = upc; this.name = name; this.price = price; this.regPrice = regPrice; this.saleId = saleId;
         }
     }
 }

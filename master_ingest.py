@@ -17,16 +17,16 @@ HEADERS = {
     "content-type": "application/json",
     "origin": "https://www.dollargeneral.com",
     "referer": "https://www.dollargeneral.com/",
-    "user-agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/143.0.0.0 Safari/537.36",
-    "x-dg-appsessiontoken": "4HR7P0M9LGUTSKPPC5ISQ8KOTFWA6SBR",
+    "user-agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/146.0.0.0 Safari/537.36",
+    "x-dg-appsessiontoken": "RZ6LQAKWP0EVWYVZ4OQ7JEV3X5MT7BO2",
     "x-dg-apptoken": "6dinqus4908fkssw9h7aa8ldcgkimn3p",
     "x-dg-cloud-service": "true",
     "x-dg-customerguid": "000000000000000000000000002042429537",
     "x-dg-deviceuniqueid": "916cefa3-75bf-4af2-a982-b06ed67665b1",
-    "x-dg-digitaltracer": "dgtracer://PurCeOrCouRCYiTemRSDEmdEmm3denzTgVrGkZtcGNsGMYtggAyGeYLfG4ztqnDfgqrduITUeiwCePKBiVfdENkhnVSGmvd2mM2HoRzlpBWeUVlsK5tUwnRRF43xSnKOpfRey5dpJZjgqNRXF5JceORCnARcYIrqGA5dKMBNGY4tgnbVgi3s4MBsHI2tiOrRgbkdOmRnGMyc2nrSgAZCEoRcMQRHw"
+    "x-dg-digitaltracer": ""
 }
 
-BLOOMREACH_ID = "uid=9215490756510:v=12.0:ts=1774585252788:hc=5"
+BLOOMREACH_ID = "uid=9215490756510:v=12.0:ts=1774585252788:hc=7"
 
 # --- GLOBAL STATE ---
 seen_upcs = set()
@@ -94,14 +94,17 @@ def crawl_dg_api():
     
     seed_terms = [
         "milk", "bread", "chips", "soda", "water", "soap", "shampoo", "paper", 
-        "pet", "toy", "phone", "candy", "cookie", "detergent", "cereal",
-        "a", "e", "i", "o", "u", "s", "t", "m"
+        "pet", "toy", "phone", "candy", "cookie", "detergent", "cereal"
     ]
+    chars = "abcdefghijklmnopqrstuvwxyz"
+    for c1 in chars:
+        for c2 in chars:
+            seed_terms.append(c1 + c2)
 
     for term in seed_terms:
         print(f"[*] Searching for '{term}'...")
         start_index = 0
-        page_size = 50
+        page_size = 24
         
         # Act like a real browser by updating referer
         session.headers.update({"referer": f"https://www.dollargeneral.com/product-search?q={term}"})

@@ -53,16 +53,26 @@ async function initEnterpriseDatabase() {
             upc VARCHAR(50) UNIQUE,
             name VARCHAR(100),
             department VARCHAR(50),
-            std_price DECIMAL(10,2)
+            std_price DECIMAL(10,2),
+            pack_size INT DEFAULT 1
         )`);
+
+        try {
+            await connection.query(`ALTER TABLE master_inventory ADD COLUMN pack_size INT DEFAULT 1`);
+        } catch (e) {}
 
         await connection.query(`CREATE TABLE IF NOT EXISTS pricing_events (
             id INT AUTO_INCREMENT PRIMARY KEY,
             name VARCHAR(100),
             type ENUM('CLEARANCE', 'MOS', 'SALE') DEFAULT 'SALE',
             description TEXT,
+            status VARCHAR(20) DEFAULT 'DRAFT',
             created_at DATETIME DEFAULT CURRENT_TIMESTAMP
         )`);
+
+        try {
+            await connection.query(`ALTER TABLE pricing_events ADD COLUMN status VARCHAR(20) DEFAULT 'DRAFT'`);
+        } catch (e) {}
 
         await connection.query(`CREATE TABLE IF NOT EXISTS event_items (
             id INT AUTO_INCREMENT PRIMARY KEY,

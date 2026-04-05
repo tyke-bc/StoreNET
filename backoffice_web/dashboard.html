@@ -18,7 +18,7 @@
 <body>
     <div class="container">
         <nav class="sidebar">
-            <div class="sidebar-header"><h2>District Control</h2><div style="font-size: 10px; color: #ccc;">v4.3.0-LIVE-INV</div></div>
+            <div class="sidebar-header"><h2>District Control</h2><div style="font-size: 10px; color: #ccc;">v4.3.1-LIVE-INV</div></div>
             <div class="nav-item active" onclick="switchModule('stores', this)">Store Directory</div>
             <div class="nav-item" onclick="switchModule('master-inv', this)">Inventory Master</div>
             <div class="nav-item" onclick="switchModule('pogs', this)">Planogram Maintenance</div>
@@ -26,6 +26,9 @@
             <div class="nav-item" onclick="switchModule('audit-logs', this)">Store Audit Logs</div>
             <div class="nav-item" onclick="switchModule('prices', this)">Price Control</div>
             <div class="nav-item" onclick="switchModule('messaging', this)">Communications</div>
+            <div class="nav-item" onclick="switchModule('online-orders', this)" style="color: #10b981; font-weight: bold;">Online Orders (BOPIS)</div>
+            <div class="nav-item" onclick="switchModule('truck-receiving', this)">Truck Deliveries</div>
+            <div class="nav-item" onclick="switchModule('rolltainers', this)">Rolltainer Builder</div>
             
             <div style="margin-top: 50px; padding: 20px; border-top: 1px solid #3e4f5f;">
                 <label style="font-size: 10px; display: block; margin-bottom: 5px; color: #ffd100;">MANAGEMENT CONTEXT</label>
@@ -48,7 +51,14 @@
                 <!-- GLOBAL MASTER LIST -->
                 <div id="mi-list" class="tab-section">
                     <div class="card" style="display:flex; justify-content:space-between; align-items:center;">
-                        <span>District-wide SKU authority. New items added here are available for all events.</span>
+                        <div style="display:flex; align-items:center; gap: 15px;">
+                            <span id="masterContextLabel">District-wide SKU authority.</span>
+                            <div>
+                                <button onclick="changeMasterPage(-1)" style="padding: 2px 8px;">&lt; Prev</button>
+                                <span id="masterPageLabel" style="font-weight: bold; margin: 0 10px;">Page 1</span>
+                                <button onclick="changeMasterPage(1)" style="padding: 2px 8px;">Next &gt;</button>
+                            </div>
+                        </div>
                         <button class="primary" onclick="openPushModal('MASTER')">Push Master to Stores...</button>
                     </div>
                     <table class="data-table" id="masterInvTable">
@@ -58,10 +68,11 @@
                                 <td><input type="text" id="add-upc" placeholder="UPC"></td>
                                 <td><input type="text" id="add-name" placeholder="Item Name"></td>
                                 <td><input type="text" id="add-dept" placeholder="Dept"></td>
+                                <td><input type="text" id="add-pack" placeholder="Pack" style="width: 50px;"></td>
                                 <td><input type="text" id="add-price" placeholder="Std Price"></td>
                                 <td><button onclick="addMasterItem()">ADD SKU</button></td>
                             </tr>
-                            <tr><th>SKU</th><th>UPC</th><th>Item Name</th><th>Dept</th><th>Std Price</th><th>Actions</th></tr>
+                            <tr><th>SKU</th><th>UPC</th><th>Item Name</th><th>Dept</th><th>Pack</th><th>Std Price</th><th>Actions</th></tr>
                         </thead>
                         <tbody></tbody>
                     </table>
@@ -70,7 +81,14 @@
                 <!-- LOCAL STORE LIST -->
                 <div id="mi-local" class="tab-section" style="display:none;">
                     <div class="card" style="display:flex; justify-content:space-between; align-items:center;">
-                        <span id="localContextLabel">Context: Store #14302</span>
+                        <div style="display:flex; align-items:center; gap: 15px;">
+                            <span id="localContextLabel">Context: Store #14302</span>
+                            <div>
+                                <button onclick="changeLocalPage(-1)" style="padding: 2px 8px;">&lt; Prev</button>
+                                <span id="localPageLabel" style="font-weight: bold; margin: 0 10px;">Page 1</span>
+                                <button onclick="changeLocalPage(1)" style="padding: 2px 8px;">Next &gt;</button>
+                            </div>
+                        </div>
                         <div>
                             <button class="primary" onclick="syncLocalToMaster()">Sync Local items to Master...</button>
                             <button class="danger" onclick="clearLocalInventory()">Clear All Items (Delete List)</button>
@@ -84,10 +102,11 @@
                                 <td><input type="text" id="add-loc-name" placeholder="Name"></td>
                                 <td><input type="text" id="add-loc-dept" placeholder="Dept"></td>
                                 <td><input type="text" id="add-loc-qty" placeholder="Qty"></td>
+                                <td><input type="text" id="add-loc-pack" placeholder="Pack" style="width: 50px;"></td>
                                 <td><input type="text" id="add-loc-price" placeholder="Price"></td>
                                 <td><button onclick="addLocalItem()">ADD SKU</button></td>
                             </tr>
-                            <tr><th>SKU</th><th>UPC</th><th>Name</th><th>Dept</th><th>QTY</th><th>Price</th><th>Actions</th></tr>
+                            <tr><th>SKU</th><th>UPC</th><th>Name</th><th>Dept</th><th>QTY</th><th>Pack</th><th>Price (Reg)</th><th>Actions</th></tr>
                         </thead>
                         <tbody></tbody>
                     </table>
@@ -96,12 +115,8 @@
                 <!-- EVENTS -->
                 <div id="mi-events" class="tab-section" style="display:none;">
                     <div class="card">
-                        <h3>Create Pricing Event</h3>
-                        <div style="display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 10px;">
-                            <input type="text" id="ev-name" placeholder="Event Name">
-                            <select id="ev-type"><option value="SALE">SALE</option><option value="CLEARANCE">CLEARANCE</option><option value="MOS">MOS (Penny)</option></select>
-                            <button class="primary" onclick="alert('Event initialization logic here...')">Initialize Event</button>
-                        </div>
+                        <h3>Active District Events</h3>
+                        <p>Manage existing events or head to the Price Control module for full creation tools.</p>
                     </div>
                     <table class="data-table" id="eventsTable"><thead><tr><th>ID</th><th>Event Name</th><th>Type</th><th>Created</th><th>Action</th></tr></thead><tbody></tbody></table>
                 </div>
@@ -196,9 +211,171 @@
                 </table>
             </div>
             
-            <div id="module-prices" class="module-view" style="display: none;"><div class="content-header"><h1>Price Control</h1></div></div>
-            <div id="module-messaging" class="module-view" style="display: none;"><div class="content-header"><h1>Communications</h1></div></div>
+            <div id="module-prices" class="module-view" style="display: none;">
+                <div class="content-header">
+                    <h1>Price Control & District Events</h1>
+                    <button class="primary" onclick="openCreateEventModal()">+ Create New Price Event</button>
+                </div>
+
+                <div class="card" style="margin-bottom: 20px;">
+                    <p>Manage district-wide price changes, clearance events, and MOS (Penny) resets.</p>
+                </div>
+
+                <table class="data-table" id="allEventsTable">
+                    <thead>
+                        <tr><th>ID</th><th>Event Name</th><th>Type</th><th>Created</th><th>Status</th><th>Actions</th></tr>
+                    </thead>
+                    <tbody></tbody>
+                </table>
+            </div>
+            <div id="module-messaging" class="module-view" style="display: none;">
+                <div class="content-header">
+                    <h1>Communications Hub</h1>
+                    <button class="primary" onclick="openComposeModal()">Compose New Bulletin</button>
+                </div>
+                
+                <div class="card" style="margin-bottom: 20px;">
+                    <p>Dispatch official district bulletins to store handhelds and backoffice systems.</p>
+                </div>
+
+                <table class="data-table" id="messagesTable">
+                    <thead>
+                        <tr><th>Date</th><th>Sender</th><th>Subject</th><th>Target</th><th>Actions</th></tr>
+                    </thead>
+                    <tbody></tbody>
+                </table>
+            </div>
+            <div id="module-online-orders" class="module-view" style="display: none;">
+                <div class="content-header">
+                    <h1>Online Order Management (BOPIS)</h1>
+                    <div style="display: flex; gap: 10px;">
+                        <button class="primary" onclick="openCreateCustomOrderModal()" style="background: #3498db;">+ Create Custom Order</button>
+                    </div>
+                </div>
+                <div class="card" id="orderContextLabel">Context: Store #14302</div>
+                <table class="data-table" id="ordersTable">
+                    <thead>
+                        <tr><th>Order ID</th><th>Customer</th><th>Status</th><th>Subtotal</th><th>Tax</th><th>Total</th><th>Created</th><th>Actions</th></tr>
+                    </thead>
+                    <tbody></tbody>
+                </table>
+            </div>
+            <div id="module-truck-receiving" class="module-view" style="display: none;">
+                <div class="content-header">
+                    <h1>Truck Delivery Management</h1>
+                    <button class="primary" onclick="openDispatchTruckModal()" style="background: #27ae60;">+ Dispatch New Truck</button>
+                </div>
+                <div class="card" id="trkContextLabel">Context: Store #14302</div>
+                <table class="data-table" id="manifestsTable">
+                    <thead>
+                        <tr><th>Manifest #</th><th>Status</th><th>Created</th><th>Action</th></tr>
+                    </thead>
+                    <tbody></tbody>
+                </table>
+            </div>
+            <div id="module-rolltainers" class="module-view" style="display: none;">
+                <div class="content-header">
+                    <h1>Rolltainer Management</h1>
+                    <button class="primary" onclick="openCreateRolltainerModal()" style="background: #e67e22;">+ Build New Rolltainer</button>
+                </div>
+                <div class="card" id="rtContextLabel">Context: Store #14302</div>
+                <table class="data-table" id="rolltainersTable">
+                    <thead>
+                        <tr><th>Barcode</th><th>Status</th><th>Created</th><th>Actions</th></tr>
+                    </thead>
+                    <tbody></tbody>
+                </table>
+            </div>
         </main>
+    </div>
+
+    <!-- CREATE ROLLTAINER MODAL -->
+    <div id="createRolltainerModal" style="display:none; position:fixed; top:0; left:0; width:100%; height:100%; background:rgba(0,0,0,0.5); justify-content:center; align-items:center; z-index: 1000;">
+        <div class="card" style="width:700px; background:#fff; max-height: 90vh; display: flex; flex-direction: column;">
+            <h3>Build Rolltainer</h3>
+            <div style="display: flex; flex-direction: column; gap: 10px; margin-top: 15px;">
+                <input type="text" id="rtBarcode" placeholder="Rolltainer Barcode (e.g. RT-001)">
+            </div>
+            
+            <h4 style="margin-top: 20px;">Add Items from Local Inventory</h4>
+            <div style="display: flex; gap: 10px; margin-bottom: 10px;">
+                <input type="text" id="rtItemSearch" placeholder="Search Local Store Inventory..." onkeyup="filterLocalInventoryForRT()" style="flex: 1; padding: 8px;">
+            </div>
+            <div style="overflow-y: auto; border: 1px solid #ccc; height: 150px; margin-bottom: 10px;">
+                <table class="data-table" id="rtInventorySearchTable">
+                    <thead><tr><th>SKU</th><th>Name</th><th>Backstock</th><th>Action</th></tr></thead>
+                    <tbody></tbody>
+                </table>
+            </div>
+
+            <h4>Loaded on Rolltainer (Boxes)</h4>
+            <div style="overflow-y: auto; border: 1px solid #ccc; flex-grow: 1; margin-bottom: 10px;">
+                <table class="data-table" id="rtLoadedItemsTable">
+                    <thead><tr><th>SKU</th><th>Name</th><th>Qty (Boxes)</th><th>Action</th></tr></thead>
+                    <tbody></tbody>
+                </table>
+            </div>
+
+            <div style="margin-top:15px; display:flex; gap:10px;">
+                <button class="primary" onclick="submitCreateRolltainer()" style="background: #e67e22;">Save Rolltainer</button>
+                <button onclick="document.getElementById('createRolltainerModal').style.display='none'">Cancel</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- DISPATCH TRUCK MODAL -->
+    <div id="dispatchTruckModal" style="display:none; position:fixed; top:0; left:0; width:100%; height:100%; background:rgba(0,0,0,0.5); justify-content:center; align-items:center; z-index: 1000;">
+        <div class="card" style="width:700px; background:#fff; max-height: 90vh; display: flex; flex-direction: column;">
+            <h3>Dispatch New Truck Manifest</h3>
+            <div style="display: flex; gap: 10px; margin-top: 15px;">
+                <input type="text" id="manifestNumber" placeholder="Manifest #" style="flex: 1;">
+                <input type="text" id="bolNumber" placeholder="BOL # (15 digits)" style="flex: 1;">
+            </div>
+            
+            <h4 style="margin-top: 20px;">Add Items from Local Inventory</h4>
+            <div style="display: flex; gap: 10px; margin-bottom: 10px;">
+                <input type="text" id="trkItemSearch" placeholder="Search Local Store Inventory..." onkeyup="filterLocalInventoryForTruck()" style="flex: 1; padding: 8px;">
+            </div>
+            <div style="overflow-y: auto; border: 1px solid #ccc; height: 150px; margin-bottom: 10px;">
+                <table class="data-table" id="trkInventorySearchTable">
+                    <thead><tr><th>SKU</th><th>Name</th><th>Pack Size</th><th>Action</th></tr></thead>
+                    <tbody></tbody>
+                </table>
+            </div>
+
+            <h4>Planned Delivery (Boxes)</h4>
+            <div style="overflow-y: auto; border: 1px solid #ccc; flex-grow: 1; margin-bottom: 10px;">
+                <table class="data-table" id="plannedTruckItemsTable">
+                    <thead><tr><th>SKU</th><th>Name</th><th>Pack Size</th><th>Qty (Boxes)</th><th>Action</th></tr></thead>
+                    <tbody></tbody>
+                </table>
+            </div>
+
+            <div style="margin-top:15px; display:flex; gap:10px;">
+                <button class="primary" onclick="submitDispatchTruck()" style="background: #27ae60;">Dispatch Truck</button>
+                <button onclick="document.getElementById('dispatchTruckModal').style.display='none'">Cancel</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- VIEW MODAL (Generic for Manifests and Rolltainers) -->
+    <div id="viewDetailModal" style="display:none; position:fixed; top:0; left:0; width:100%; height:100%; background:rgba(0,0,0,0.5); justify-content:center; align-items:center; z-index: 1010;">
+        <div class="card" style="width:600px; background:#fff; max-height: 80vh; display: flex; flex-direction: column;">
+            <h3 id="viewDetailTitle">Details</h3>
+            <div style="overflow-y: auto; flex-grow: 1; margin: 15px 0; border: 1px solid #eee;">
+                <table class="data-table" id="viewDetailTable">
+                    <thead><tr id="viewDetailHeaders"></tr></thead>
+                    <tbody></tbody>
+                </table>
+            </div>
+            <div style="display: flex; gap: 10px; justify-content: space-between;">
+                <div style="display: flex; gap: 10px;">
+                    <button class="primary" id="detailPrintBtn">PRINT SUMMARY</button>
+                    <button class="primary" id="detailReceiveBtn" style="background: #27ae60; display: none;">MASTER RECEIVE ALL</button>
+                </div>
+                <button onclick="document.getElementById('viewDetailModal').style.display='none'">CLOSE</button>
+            </div>
+        </div>
     </div>
 
     <!-- CREATE POG MODAL -->
@@ -218,7 +395,27 @@
         </div>
     </div>
 
-    <!-- ADD POG ITEM MODAL -->
+    <!-- ADD EVENT ITEM MODAL -->
+    <div id="addEventItemModal" style="display:none; position:fixed; top:0; left:0; width:100%; height:100%; background:rgba(0,0,0,0.5); justify-content:center; align-items:center; z-index: 1050;">
+        <div class="card" style="width:600px; background:#fff; max-height: 80vh; display: flex; flex-direction: column;">
+            <h3>Add Product to Event</h3>
+            <div style="display: flex; gap: 10px; margin: 10px 0;">
+                <input type="text" id="eventItemSearch" placeholder="Search Master..." onkeyup="filterEventMasterItems()" style="flex:1; padding: 8px;">
+                <button onclick="changeEventMasterPage(-1)">&lt; Prev</button>
+                <span id="eventMasterPageLabel" style="align-self:center;">Page 1</span>
+                <button onclick="changeEventMasterPage(1)">Next &gt;</button>
+            </div>
+            <div style="overflow-y: auto; border: 1px solid #ccc; flex-grow: 1; margin-bottom: 10px;">
+                <table class="data-table" id="eventMasterSelectTable">
+                    <thead><tr><th>SKU</th><th>UPC</th><th>Name</th><th>Std Price</th><th>Action</th></tr></thead>
+                    <tbody></tbody>
+                </table>
+            </div>
+            <div style="display:flex; justify-content:flex-end;">
+                <button onclick="document.getElementById('addEventItemModal').style.display='none'">Close</button>
+            </div>
+        </div>
+    </div>
     <div id="addPogItemModal" style="display:none; position:fixed; top:0; left:0; width:100%; height:100%; background:rgba(0,0,0,0.5); justify-content:center; align-items:center; z-index: 1000;">
         <div class="card" style="width:600px; background:#fff; max-height: 80vh; display: flex; flex-direction: column;">
             <h3>Add Product to Shelf</h3>
@@ -231,6 +428,99 @@
             </div>
             <div style="display:flex; justify-content:flex-end;">
                 <button onclick="document.getElementById('addPogItemModal').style.display='none'">Close</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- COMPOSE MESSAGE MODAL -->
+    <div id="composeModal" style="display:none; position:fixed; top:0; left:0; width:100%; height:100%; background:rgba(0,0,0,0.5); justify-content:center; align-items:center; z-index: 1000;">
+        <div class="card" style="width:500px; background:#fff;">
+            <h3>Compose District Bulletin</h3>
+            <div style="display: flex; flex-direction: column; gap: 10px; margin-top: 15px;">
+                <input type="text" id="msgSubject" placeholder="Subject">
+                <textarea id="msgBody" placeholder="Message Body" style="height: 150px; padding: 8px;"></textarea>
+                <select id="msgTargetType">
+                    <option value="GLOBAL">Global (All Stores)</option>
+                    <option value="STORE">Specific Store</option>
+                </select>
+                <select id="msgTargetId" style="display: none;"></select>
+            </div>
+            <div style="margin-top:15px; display:flex; gap:10px;">
+                <button class="primary" onclick="submitMessage()">Dispatch Bulletin</button>
+                <button onclick="document.getElementById('composeModal').style.display='none'">Cancel</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- CREATE/EDIT EVENT MODAL -->
+    <div id="createEventModal" style="display:none; position:fixed; top:0; left:0; width:100%; height:100%; background:rgba(0,0,0,0.5); justify-content:center; align-items:center; z-index: 1000;">
+        <div class="card" style="width:600px; background:#fff; max-height: 90vh; display: flex; flex-direction: column;">
+            <h3 id="eventModalTitle">Create Pricing Event</h3>
+            <input type="hidden" id="editEventId">
+            <div style="display: flex; flex-direction: column; gap: 10px; margin-top: 15px;">
+                <input type="text" id="newEventName" placeholder="Event Name (e.g. Easter Sale 2026)">
+                <select id="newEventType">
+                    <option value="SALE">SALE</option>
+                    <option value="CLEARANCE">CLEARANCE</option>
+                    <option value="MOS">MOS (Penny)</option>
+                </select>
+                <textarea id="newEventDesc" placeholder="Description"></textarea>
+            </div>
+            
+            <h4 style="margin-top: 20px;">Event Items</h4>
+            <div style="display: flex; gap: 10px; margin-bottom: 10px;">
+                <input type="text" id="eventItemSku" placeholder="SKU/UPC" style="flex: 1;">
+                <input type="text" id="eventItemPrice" placeholder="New Sale Price ($)" style="width: 130px;">
+                <button onclick="addEntryToEvent()">Add</button>
+                <button class="primary" onclick="openEventAddItemModal()">Search Master...</button>
+            </div>
+            <div style="overflow-y: auto; border: 1px solid #ccc; flex-grow: 1; margin-bottom: 10px;">
+                <table class="data-table" id="eventItemsQueueTable">
+                    <thead><tr><th>SKU</th><th>Price</th><th>Action</th></tr></thead>
+                    <tbody></tbody>
+                </table>
+            </div>
+
+            <div style="margin-top:15px; display:flex; gap:10px;">
+                <button class="primary" id="eventSubmitBtn" onclick="submitCreateEvent()">Create Event</button>
+                <button onclick="document.getElementById('createEventModal').style.display='none'">Cancel</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- CREATE CUSTOM ORDER MODAL -->
+    <div id="createCustomOrderModal" style="display:none; position:fixed; top:0; left:0; width:100%; height:100%; background:rgba(0,0,0,0.5); justify-content:center; align-items:center; z-index: 1000;">
+        <div class="card" style="width:600px; background:#fff; max-height: 90vh; display: flex; flex-direction: column;">
+            <h3>Create Custom Online Order</h3>
+            <div style="display: flex; flex-direction: column; gap: 10px; margin-top: 15px;">
+                <input type="text" id="orderCustomerName" placeholder="Customer Name (e.g. Jane Smith)">
+                <label style="display: flex; align-items: center; gap: 8px; font-size: 14px; color: #e67e22; font-weight: bold;">
+                    <input type="checkbox" id="orderIsMock"> Mark as Test Order (No Inventory Impact)
+                </label>
+            </div>
+            
+            <h4 style="margin-top: 20px;">Add Items from Local Inventory</h4>
+            <div style="display: flex; gap: 10px; margin-bottom: 10px;">
+                <input type="text" id="localItemSearch" placeholder="Search Local Store Inventory..." onkeyup="filterLocalInventoryForOrder()" style="flex: 1; padding: 8px;">
+            </div>
+            <div style="overflow-y: auto; border: 1px solid #ccc; height: 150px; margin-bottom: 10px;">
+                <table class="data-table" id="localInventorySearchTable">
+                    <thead><tr><th>SKU</th><th>Name</th><th>Price</th><th>Action</th></tr></thead>
+                    <tbody></tbody>
+                </table>
+            </div>
+
+            <h4>Selected Items</h4>
+            <div style="overflow-y: auto; border: 1px solid #ccc; flex-grow: 1; margin-bottom: 10px;">
+                <table class="data-table" id="selectedOrderItemsTable">
+                    <thead><tr><th>SKU</th><th>Name</th><th>Qty</th><th>Action</th></tr></thead>
+                    <tbody></tbody>
+                </table>
+            </div>
+
+            <div style="margin-top:15px; display:flex; gap:10px;">
+                <button class="primary" onclick="submitCustomOrder()" style="background: #3498db;">Create Order</button>
+                <button onclick="document.getElementById('createCustomOrderModal').style.display='none'">Cancel</button>
             </div>
         </div>
     </div>
@@ -266,6 +556,11 @@
             if(module === 'employees') loadEmployees();
             if(module === 'audit-logs') loadLogs();
             if(module === 'pogs') loadPogs();
+            if(module === 'prices') loadPriceEvents();
+            if(module === 'messaging') loadMessages();
+            if(module === 'online-orders') loadOnlineOrders();
+            if(module === 'truck-receiving') loadManifests();
+            if(module === 'rolltainers') loadRolltainers();
         }
 
         function switchTab(tabId, tabEl) {
@@ -274,6 +569,7 @@
             document.getElementById(tabId).style.display = 'block';
             tabEl.classList.add('active');
             if(tabId === 'mi-local') loadLocalInventory();
+            if(tabId === 'mi-events') loadPriceEvents();
         }
 
         function switchGlobalStore(id) {
@@ -281,9 +577,118 @@
             document.getElementById('localContextLabel').innerText = 'Context: Store #' + id;
             document.getElementById('empContextLabel').innerText = 'Context: Store #' + id;
             document.getElementById('logContextLabel').innerText = 'Context: Store #' + id;
+            document.getElementById('orderContextLabel').innerText = 'Context: Store #' + id;
             if(document.getElementById('mi-local').style.display !== 'none') loadLocalInventory();
             if(document.getElementById('module-employees').style.display !== 'none') loadEmployees();
             if(document.getElementById('module-audit-logs').style.display !== 'none') loadLogs();
+            if(document.getElementById('module-online-orders').style.display !== 'none') loadOnlineOrders();
+        }
+
+        // --- ONLINE ORDERS ---
+        async function loadOnlineOrders() {
+            const orders = await apiFetch('/api/bopis/all');
+            const tb = document.querySelector('#ordersTable tbody'); tb.innerHTML = '';
+            orders.forEach(o => {
+                const statusColor = o.status === 'COMPLETED' ? '#2ecc71' : (o.status === 'PICKING' ? '#f1c40f' : '#3498db');
+                tb.innerHTML += `<tr>
+                    <td>#${o.id}${o.is_mock ? ' <small style="color:#e67e22">[TEST]</small>' : ''}</td>
+                    <td>${o.customer_name}</td>
+                    <td><span style="font-weight:bold; color:${statusColor}">${o.status}</span></td>
+                    <td>$${(o.subtotal || 0).toFixed(2)}</td><td>$${(o.tax || 0).toFixed(2)}</td>
+                    <td><b>$${(o.total || 0).toFixed(2)}</b></td>
+                    <td>${new Date(o.created_at).toLocaleString()}</td>
+                    <td>
+                        <span class="action-link delete" onclick="deleteOrder(${o.id})">DELETE</span>
+                    </td>
+                </tr>`;
+            });
+        }
+
+        async function deleteOrder(id) {
+            if (confirm('Permanently delete Order #' + id + '?')) {
+                const res = await apiFetch('/api/bopis/order/' + id, { method: 'DELETE' });
+                if (res.success) loadOnlineOrders();
+            }
+        }
+
+        // --- CUSTOM ORDER FLOW ---
+        let localInventoryCache = [];
+        let selectedOrderItems = [];
+
+        async function openCreateCustomOrderModal() {
+            document.getElementById('orderCustomerName').value = '';
+            document.getElementById('orderIsMock').checked = false;
+            document.getElementById('localItemSearch').value = '';
+            selectedOrderItems = [];
+            renderSelectedOrderItems();
+            
+            // Pre-load local inventory
+            localInventoryCache = await apiFetch('/api/inventory/local');
+            renderLocalInventoryList(localInventoryCache);
+            
+            document.getElementById('createCustomOrderModal').style.display = 'flex';
+        }
+
+        function renderLocalInventoryList(items) {
+            const tb = document.querySelector('#localInventorySearchTable tbody');
+            tb.innerHTML = '';
+            items.slice(0, 50).forEach(i => { // Limit for performance
+                tb.innerHTML += `<tr>
+                    <td>${i.sku}</td><td>${i.name}</td><td>$${i.price}</td>
+                    <td><button onclick="addItemToOrderQueue('${i.sku}', '${i.name.replace(/'/g, "\\'")}')">Add</button></td>
+                </tr>`;
+            });
+        }
+
+        function filterLocalInventoryForOrder() {
+            const search = document.getElementById('localItemSearch').value.toLowerCase();
+            const filtered = localInventoryCache.filter(i => 
+                (i.sku && i.sku.toLowerCase().includes(search)) || 
+                (i.name && i.name.toLowerCase().includes(search)) ||
+                (i.upc && i.upc.toLowerCase().includes(search))
+            );
+            renderLocalInventoryList(filtered);
+        }
+
+        function addItemToOrderQueue(sku, name) {
+            const existing = selectedOrderItems.find(i => i.sku === sku);
+            if (existing) {
+                existing.qty++;
+            } else {
+                selectedOrderItems.push({ sku, name, qty: 1 });
+            }
+            renderSelectedOrderItems();
+        }
+
+        function renderSelectedOrderItems() {
+            const tb = document.querySelector('#selectedOrderItemsTable tbody');
+            tb.innerHTML = '';
+            selectedOrderItems.forEach((it, idx) => {
+                tb.innerHTML += `<tr>
+                    <td>${it.sku}</td><td>${it.name}</td>
+                    <td><input type="number" value="${it.qty}" style="width: 50px;" onchange="selectedOrderItems[${idx}].qty = parseInt(this.value)"></td>
+                    <td><span class="action-link delete" onclick="selectedOrderItems.splice(${idx},1); renderSelectedOrderItems();">REMOVE</span></td>
+                </tr>`;
+            });
+        }
+
+        async function submitCustomOrder() {
+            const customer_name = document.getElementById('orderCustomerName').value;
+            const is_mock = document.getElementById('orderIsMock').checked;
+            if (selectedOrderItems.length === 0) return alert('Select at least one item.');
+            
+            const res = await apiFetch('/api/bopis/create', { 
+                method: 'POST', 
+                body: JSON.stringify({ customer_name, items: selectedOrderItems, is_mock }) 
+            });
+            
+            if (res.success) {
+                alert('Order #' + res.orderId + ' created successfully!' + (is_mock ? ' (TEST MODE ACTIVE)' : ''));
+                document.getElementById('createCustomOrderModal').style.display = 'none';
+                loadOnlineOrders();
+            } else {
+                alert('Error creating order: ' + res.message);
+            }
         }
 
         async function loadStores() {
@@ -295,55 +700,147 @@
         }
 
         // --- MASTER CRUD ---
+        let currentMasterPage = 1;
+        let masterItemsCache = [];
+
         async function loadMasterInventory() {
-            const items = await apiFetch('/api/inventory/master');
-            const tb = document.querySelector('#masterInvTable tbody'); tb.innerHTML = '';
-            items.forEach(i => {
+            masterItemsCache = await apiFetch('/api/inventory/master');
+            currentMasterPage = 1;
+            renderMasterInventory();
+        }
+
+        function changeMasterPage(dir) {
+            const maxPage = Math.ceil(masterItemsCache.length / 500);
+            if (currentMasterPage + dir >= 1 && currentMasterPage + dir <= maxPage) {
+                currentMasterPage += dir;
+                renderMasterInventory();
+            }
+        }
+
+        function renderMasterInventory() {
+            document.getElementById('masterContextLabel').innerText = `District-wide SKU authority. Total items: ${masterItemsCache.length}`;
+            document.getElementById('masterPageLabel').innerText = `Page ${currentMasterPage} of ${Math.ceil(masterItemsCache.length / 500) || 1}`;
+            
+            const startIdx = (currentMasterPage - 1) * 500;
+            const endIdx = startIdx + 500;
+            
+            const tb = document.querySelector('#masterInvTable tbody');
+            let rowsHtml = '';
+            masterItemsCache.slice(startIdx, endIdx).forEach(i => {
                 const safeName = (i.name || '').replace(/'/g, "\\'").replace(/"/g, '&quot;');
-                tb.innerHTML += `<tr>
-                    <td>${i.sku}</td><td>${i.upc || '-'}</td><td>${i.name}</td><td>${i.department}</td><td>$${i.std_price}</td>
+                const safeDept = (i.department || '').replace(/'/g, "\\'").replace(/"/g, '&quot;');
+                rowsHtml += `<tr>
+                    <td>${i.sku}</td><td>${i.upc || '-'}</td><td>${i.name}</td><td>${i.department}</td>
+                    <td>${i.pack_size}</td><td>$${i.std_price}</td>
                     <td>
-                        <span class="action-link" onclick="printSticker('${safeName}', '${i.sku}', '${i.upc || ''}')">PRINT LBL</span>
-                        <span class="action-link" onclick="editMasterItem('${i.sku}','${i.upc}','${safeName}','${i.department}',${i.std_price})">EDIT</span>
+                        <span class="action-link" onclick="printSticker('${safeName}', '${i.sku}', '${i.upc || ''}', 'N/A', 'F1', '${safeDept}', '')">PRINT LBL</span>
+                        <span class="action-link" onclick="editMasterItem('${i.sku}','${i.upc}','${safeName}','${i.department}',${i.std_price},${i.pack_size})">EDIT</span>
                         <span class="action-link delete" onclick="deleteMasterItem('${i.sku}')">DEL</span>
                     </td>
                 </tr>`;
             });
+            tb.innerHTML = rowsHtml;
         }
+
         async function addMasterItem() {
-            const body = { sku: document.getElementById('add-sku').value, upc: document.getElementById('add-upc').value, name: document.getElementById('add-name').value, department: document.getElementById('add-dept').value, std_price: document.getElementById('add-price').value };
+            const body = { 
+                sku: document.getElementById('add-sku').value, 
+                upc: document.getElementById('add-upc').value, 
+                name: document.getElementById('add-name').value, 
+                department: document.getElementById('add-dept').value, 
+                std_price: document.getElementById('add-price').value,
+                pack_size: document.getElementById('add-pack').value || 1
+            };
             if(!body.sku || !body.name) return alert('SKU and Name required.');
             await apiFetch('/api/inventory/master/add', { method: 'POST', body: JSON.stringify(body) });
             loadMasterInventory();
         }
-        async function editMasterItem(oldSku, upc, name, dept, price) {
-            const newSku = prompt("Edit SKU:", oldSku); if(!newSku) return;
+        async function editMasterItem(oldSku, upc, name, dept, price, pack) {
+            const newSku = prompt("Edit SKU:", oldSku); if(newSku === null) return;
             const newUpc = prompt("Edit UPC:", upc);
-            const newName = prompt("Edit Name:", name); if(!newName) return;
-            const newDept = prompt("Edit Dept:", dept); if(!newDept) return;
-            const newPrice = prompt("Edit Std Price:", price); if(!newPrice) return;
-            await apiFetch('/api/inventory/master/update', { method: 'POST', body: JSON.stringify({ oldSku, newSku, upc: newUpc, name: newName, department: newDept, std_price: newPrice }) });
-            loadMasterInventory();
+            const newName = prompt("Edit Name:", name); if(newName === null) return;
+            const newDept = prompt("Edit Dept:", dept); if(newDept === null) return;
+            const newPrice = prompt("Edit Std Price:", price); if(newPrice === null) return;
+            const newPack = prompt("Edit Pack Size:", pack); if(newPack === null) return;
+
+            const res = await apiFetch('/api/inventory/master/update', { 
+                method: 'POST', 
+                body: JSON.stringify({ oldSku, newSku, upc: newUpc, name: newName, department: newDept, std_price: newPrice, pack_size: newPack }) 
+            });
+            if (res.success) {
+                loadMasterInventory();
+            } else {
+                alert("Master Update Failed: " + res.message);
+            }
         }
-        async function deleteMasterItem(sku) { if(confirm('Delete SKU ' + sku + ' from District Master?')) { await apiFetch('/api/inventory/master/delete', { method: 'POST', body: JSON.stringify({ sku }) }); loadMasterInventory(); } }
+
+        async function deleteMasterItem(sku) { 
+            if(confirm('Delete SKU ' + sku + ' from District Master?')) { 
+                const res = await apiFetch('/api/inventory/master/delete', { method: 'POST', body: JSON.stringify({ sku }) }); 
+                if (res.success) {
+                    loadMasterInventory();
+                } else {
+                    alert("Master Deletion Failed: " + res.message);
+                }
+            } 
+        }
+
 
         // --- LOCAL CRUD ---
+        let currentLocalPage = 1;
+        let localItemsCache = [];
+
         async function loadLocalInventory() {
-            const items = await apiFetch('/api/inventory/local');
-            const tb = document.querySelector('#localInvTable tbody'); tb.innerHTML = '';
-            items.forEach(i => {
+            localItemsCache = await apiFetch('/api/inventory/local');
+            currentLocalPage = 1;
+            renderLocalInventory();
+        }
+
+        function changeLocalPage(dir) {
+            const maxPage = Math.ceil(localItemsCache.length / 500);
+            if (currentLocalPage + dir >= 1 && currentLocalPage + dir <= maxPage) {
+                currentLocalPage += dir;
+                renderLocalInventory();
+            }
+        }
+
+        function renderLocalInventory() {
+            document.getElementById('localPageLabel').innerText = `Page ${currentLocalPage} of ${Math.ceil(localItemsCache.length / 500) || 1}`;
+            
+            const startIdx = (currentLocalPage - 1) * 500;
+            const endIdx = startIdx + 500;
+            
+            const tb = document.querySelector('#localInvTable tbody');
+            let rowsHtml = '';
+            localItemsCache.slice(startIdx, endIdx).forEach(i => {
                 const safeName = (i.name || '').replace(/'/g, "\\'").replace(/"/g, '&quot;');
-                tb.innerHTML += `<tr>
-                    <td>${i.sku}</td><td>${i.upc || '-'}</td><td>${i.name}</td><td>${i.department}</td><td>${i.quantity}</td><td>$${i.price}</td>
+                const safeDept = (i.department || '').replace(/'/g, "\\'").replace(/"/g, '&quot;');
+                const safeLoc = (i.location || 'N/A').replace(/'/g, "\\'").replace(/"/g, '&quot;');
+                const safeFaces = (i.faces || 'F1').replace(/'/g, "\\'").replace(/"/g, '&quot;');
+                const safePogInfo = (i.pog_info || '').replace(/'/g, "\\'").replace(/"/g, '&quot;');
+                rowsHtml += `<tr>
+                    <td>${i.sku}</td><td>${i.upc || '-'}</td><td>${i.name}</td><td>${i.department}</td><td>${i.quantity}</td>
+                    <td>${i.pack_size} <span class="action-link" onclick="editPackSize('${i.sku}', ${i.pack_size})">EDIT</span></td>
+                    <td>$${i.price}</td>
                     <td>
-                        <span class="action-link" onclick="printSticker('${safeName}', '${i.sku}', '${i.upc || ''}')">PRINT LBL</span>
+                        <span class="action-link" onclick="printSticker('${safeName}', '${i.sku}', '${i.upc || ''}', '${safeLoc}', '${safeFaces}', '${safeDept}', '${safePogInfo}')">PRINT LBL</span>
                         <span class="action-link" onclick="editLocalItem('${i.sku}','${safeName}','${i.department}',${i.price},${i.quantity})">EDIT</span>
                         <span class="action-link delete" onclick="deleteLocalItem('${i.sku}')">DEL</span>
                     </td>
                 </tr>`;
             });
+            tb.innerHTML = rowsHtml;
         }
         
+        async function editPackSize(sku, current) {
+            const newVal = prompt("Enter new Ship Qty (Pack Size) for SKU " + sku + ":", current);
+            if (newVal !== null && newVal !== "" && !isNaN(newVal)) {
+                const res = await apiFetch('/api/inventory/local/update_pack_size', { method: 'POST', body: JSON.stringify({ sku, pack_size: parseInt(newVal) }) });
+                if (res.success) loadLocalInventory();
+                else alert("Update failed: " + res.message);
+            }
+        }
+
         async function addLocalItem() {
             const body = { 
                 sku: document.getElementById('add-loc-sku').value, 
@@ -351,6 +848,7 @@
                 name: document.getElementById('add-loc-name').value, 
                 department: document.getElementById('add-loc-dept').value, 
                 qty: document.getElementById('add-loc-qty').value,
+                pack_size: document.getElementById('add-loc-pack').value,
                 price: document.getElementById('add-loc-price').value 
             };
             if(!body.sku || !body.name) return alert('SKU and Name required.');
@@ -375,9 +873,9 @@
             }
         }
         
-        async function printSticker(name, sku, upc) {
+        async function printSticker(name, sku, upc, location, faces, department, pog_info) {
             alert('Sending label to printer for ' + name + '...');
-            const res = await apiFetch('/api/print_sticker', { method: 'POST', body: JSON.stringify({ name, sku, upc }) });
+            const res = await apiFetch('/api/print_sticker', { method: 'POST', body: JSON.stringify({ name, sku, upc, location, faces, department, pog_info }) });
             if (!res.success) {
                 alert('Error printing label: ' + res.message);
             }
@@ -570,12 +1068,14 @@
         }
 
         // --- PUSH ---
-        function openPushModal(type) {
+        let activePushAction = 'PUSH'; // 'PUSH' or 'REVERT'
+        function openPushModal(type, action = 'PUSH') {
             activePushType = type;
+            activePushAction = action;
             let label = '';
             if(type === 'MASTER') label = 'Pushing Global Master List';
             else if(type === 'POG') label = 'Pushing Planogram to Stores';
-            else label = `Pushing Pricing Event #${type}`;
+            else label = (action === 'REVERT' ? `Reverting Pricing Event #${type}` : `Pushing Pricing Event #${type}`);
             
             document.getElementById('push-type-label').innerText = label;
             const list = document.getElementById('store-check-list'); list.innerHTML = '';
@@ -595,13 +1095,442 @@
                 url = '/api/pogs/push';
                 body.pog_id = currentPogId;
             } else {
-                url = '/api/inventory/event/push';
+                url = (activePushAction === 'REVERT') ? '/api/inventory/event/revert' : '/api/inventory/event/push';
                 body.eventId = activePushType;
             }
             
             const res = await apiFetch(url, { method: 'POST', body: JSON.stringify(body) });
             alert(res.message); 
             document.getElementById('pushModal').style.display = 'none';
+        }
+
+        // --- MESSAGING ---
+        async function loadMessages() {
+            const msgs = await apiFetch('/api/messages');
+            const tb = document.querySelector('#messagesTable tbody'); tb.innerHTML = '';
+            msgs.forEach(m => {
+                tb.innerHTML += `<tr>
+                    <td>${new Date(m.created_at).toLocaleString()}</td>
+                    <td>${m.sender_eid}</td>
+                    <td>${m.subject}</td>
+                    <td>${m.target_type === 'GLOBAL' ? 'GLOBAL' : 'Store #' + m.target_id}</td>
+                    <td>
+                        <span class="action-link" onclick="alert('${m.body.replace(/\n/g, '\\n')}')">VIEW</span>
+                        <span class="action-link delete" onclick="deleteMessage(${m.id})">DELETE</span>
+                    </td>
+                </tr>`;
+            });
+        }
+        function openComposeModal() {
+            document.getElementById('msgSubject').value = '';
+            document.getElementById('msgBody').value = '';
+            const targetIdSel = document.getElementById('msgTargetId');
+            targetIdSel.innerHTML = '';
+            stores.forEach(s => targetIdSel.innerHTML += `<option value="${s.id}">Store #${s.id} - ${s.name}</option>`);
+            document.getElementById('msgTargetType').onchange = (e) => {
+                targetIdSel.style.display = e.target.value === 'STORE' ? 'block' : 'none';
+            };
+            document.getElementById('composeModal').style.display = 'flex';
+        }
+        async function submitMessage() {
+            const body = {
+                subject: document.getElementById('msgSubject').value,
+                body: document.getElementById('msgBody').value,
+                target_type: document.getElementById('msgTargetType').value,
+                target_id: document.getElementById('msgTargetId').value
+            };
+            if(!body.subject || !body.body) return alert('Subject and Body required.');
+            await apiFetch('/api/messages/send', { method: 'POST', body: JSON.stringify(body) });
+            document.getElementById('composeModal').style.display = 'none';
+            loadMessages();
+        }
+        async function deleteMessage(id) {
+            if(confirm('Delete this message?')) {
+                await apiFetch('/api/messages/delete', { method: 'POST', body: JSON.stringify({ id }) });
+                loadMessages();
+            }
+        }
+
+        // --- PRICE EVENTS ---
+        let eventItemsQueue = [];
+
+        async function loadPriceEvents() {
+            const events = await apiFetch('/api/inventory/events');
+            
+            // Main Module Table
+            const tbAll = document.querySelector('#allEventsTable tbody'); tbAll.innerHTML = '';
+            events.forEach(e => {
+                const statusStr = e.status || 'DRAFT';
+                tbAll.innerHTML += `<tr>
+                    <td>${e.id}</td><td>${e.name}</td><td>${e.type}</td>
+                    <td>${new Date(e.created_at).toLocaleDateString()}</td>
+                    <td><span style="font-weight:bold; color:${statusStr === 'PUSHED' ? '#2ecc71' : (statusStr === 'REVERTED' ? '#95a5a6' : '#f1c40f')}">${statusStr}</span></td>
+                    <td>
+                        <span class="action-link" onclick="editPriceEvent(${e.id}, '${e.name.replace(/'/g, "\\'")}', '${e.type}', '${(e.description || '').replace(/'/g, "\\'")}')">EDIT</span>
+                        <span class="action-link" style="color: #27ae60;" onclick="openPushModal(${e.id}, 'PUSH')">PUSH</span>
+                        ${e.type !== 'MOS' ? `<span class="action-link" style="color: #e67e22;" onclick="openPushModal(${e.id}, 'REVERT')">REVERT</span>` : ''}
+                    </td>
+                </tr>`;
+            });
+
+            // Inventory Tab Table
+            const tbInv = document.querySelector('#eventsTable tbody'); 
+            if(tbInv) {
+                tbInv.innerHTML = '';
+                events.forEach(e => {
+                    tbInv.innerHTML += `<tr>
+                        <td>${e.id}</td><td>${e.name}</td><td>${e.type}</td>
+                        <td>${new Date(e.created_at).toLocaleDateString()}</td>
+                        <td><span class="action-link" onclick="openPushModal(${e.id})">PUSH</span></td>
+                    </tr>`;
+                });
+            }
+        }
+        function openCreateEventModal() {
+            document.getElementById('eventModalTitle').innerText = 'Create Pricing Event';
+            document.getElementById('editEventId').value = '';
+            document.getElementById('newEventName').value = '';
+            document.getElementById('newEventDesc').value = '';
+            document.getElementById('newEventType').value = 'SALE';
+            document.getElementById('eventSubmitBtn').innerText = 'Create Event';
+            eventItemsQueue = [];
+            renderEventQueue();
+            document.getElementById('createEventModal').style.display = 'flex';
+        }
+        async function deletePriceEvent(eventId) {
+            if(confirm('Permanently delete this reverted pricing event?')) {
+                const res = await apiFetch('/api/inventory/event/delete', { 
+                    method: 'POST', 
+                    body: JSON.stringify({ eventId }) 
+                });
+                if (res.success) {
+                    alert('Event deleted.');
+                    loadPriceEvents();
+                } else {
+                    alert('Error: ' + res.message);
+                }
+            }
+        }
+
+        async function editPriceEvent(id, name, type, desc) {
+            document.getElementById('eventModalTitle').innerText = 'Edit Pricing Event #' + id;
+            document.getElementById('editEventId').value = id;
+            document.getElementById('newEventName').value = name;
+            document.getElementById('newEventDesc').value = desc;
+            document.getElementById('newEventType').value = type;
+            document.getElementById('eventSubmitBtn').innerText = 'Save Changes';
+            
+            // Load items for this event
+            const items = await apiFetch(`/api/inventory/events/${id}/items`);
+            eventItemsQueue = items.map(i => ({ sku: i.sku, price: i.price }));
+            renderEventQueue();
+            
+            document.getElementById('createEventModal').style.display = 'flex';
+        }
+        function addEntryToEvent() {
+            const sku = document.getElementById('eventItemSku').value;
+            const price = document.getElementById('eventItemPrice').value;
+            if(!sku || !price) return alert('SKU and Price required.');
+            eventItemsQueue.push({ sku, price });
+            document.getElementById('eventItemSku').value = '';
+            document.getElementById('eventItemPrice').value = '';
+            renderEventQueue();
+        }
+        let eventMasterInventoryCache = [];
+        async function openEventAddItemModal() {
+            if (masterInventoryCache.length === 0) {
+                masterInventoryCache = await apiFetch('/api/inventory/master');
+            }
+            eventMasterInventoryCache = masterInventoryCache;
+            renderEventMasterList(eventMasterInventoryCache);
+            document.getElementById('addEventItemModal').style.display = 'flex';
+            document.getElementById('eventItemSearch').value = '';
+            document.getElementById('eventItemSearch').focus();
+        }
+
+        function renderEventMasterList(items) {
+            const tb = document.querySelector('#eventMasterSelectTable tbody');
+            tb.innerHTML = '';
+            items.forEach(i => {
+                const targetId = i.sku || i.upc;
+                tb.innerHTML += `<tr>
+                    <td>${i.sku || '-'}</td><td>${i.upc || '-'}</td><td>${i.name}</td><td>$${i.std_price}</td>
+                    <td><button class="primary" onclick="selectItemForEvent('${targetId}', ${i.std_price})">Select</button></td>
+                </tr>`;
+            });
+        }
+
+        function filterEventMasterItems() {
+            const search = document.getElementById('eventItemSearch').value.toLowerCase();
+            const filtered = eventMasterInventoryCache.filter(i => 
+                (i.sku && i.sku.toLowerCase().includes(search)) || 
+                (i.name && i.name.toLowerCase().includes(search)) ||
+                (i.upc && i.upc.toLowerCase().includes(search))
+            );
+            renderEventMasterList(filtered);
+        }
+
+        function selectItemForEvent(sku, currentPrice) {
+            document.getElementById('eventItemSku').value = sku;
+            document.getElementById('eventItemPrice').value = currentPrice;
+            document.getElementById('addEventItemModal').style.display = 'none';
+            document.getElementById('eventItemPrice').focus();
+            document.getElementById('eventItemPrice').select();
+        }
+        function renderEventQueue() {
+            const tb = document.querySelector('#eventItemsQueueTable tbody'); tb.innerHTML = '';
+            eventItemsQueue.forEach((it, idx) => {
+                tb.innerHTML += `<tr><td>${it.sku}</td><td>$${it.price}</td><td><span class="action-link delete" onclick="eventItemsQueue.splice(${idx},1); renderEventQueue();">REMOVE</span></td></tr>`;
+            });
+        }
+        async function submitCreateEvent() {
+            const editId = document.getElementById('editEventId').value;
+            const body = {
+                id: editId,
+                name: document.getElementById('newEventName').value,
+                type: document.getElementById('newEventType').value,
+                description: document.getElementById('newEventDesc').value,
+                items: eventItemsQueue
+            };
+            if(!body.name || eventItemsQueue.length === 0) return alert('Name and items required.');
+            
+            const url = editId ? '/api/inventory/event/update' : '/api/inventory/event/create';
+            await apiFetch(url, { method: 'POST', body: JSON.stringify(body) });
+            document.getElementById('createEventModal').style.display = 'none';
+            loadPriceEvents();
+        }
+
+        // --- TRUCK RECEIVING FLOW ---
+        let plannedTruckItems = [];
+
+        async function loadManifests() {
+            const trks = await apiFetch('/api/bopis/manifests');
+            const tb = document.querySelector('#manifestsTable tbody'); tb.innerHTML = '';
+            trks.forEach(t => {
+                const statusColor = t.status === 'COMPLETED' ? '#2ecc71' : (t.status === 'RECEIVING' ? '#f1c40f' : '#3498db');
+                tb.innerHTML += `<tr>
+                    <td>${t.manifest_number} <small>(${t.bol_number || 'No BOL'})</small></td>
+                    <td><span style="font-weight:bold; color:${statusColor}">${t.status}</span></td>
+                    <td>${new Date(t.created_at).toLocaleString()}</td>
+                    <td><span class="action-link" onclick="openManifestDetails(${t.id}, '${t.manifest_number}')">VIEW</span></td>
+                </tr>`;
+            });
+            document.getElementById('trkContextLabel').innerText = 'Context: Store #' + currentStoreId;
+        }
+
+        async function openDispatchTruckModal() {
+            document.getElementById('manifestNumber').value = 'TRK-' + Math.floor(1000 + Math.random() * 9000);
+            document.getElementById('bolNumber').value = '';
+            plannedTruckItems = [];
+            renderPlannedTruckItems();
+            
+            localInventoryCache = await apiFetch('/api/inventory/local');
+            renderLocalInventoryForTruck(localInventoryCache);
+            document.getElementById('dispatchTruckModal').style.display = 'flex';
+        }
+
+        function renderLocalInventoryForTruck(items) {
+            const tb = document.querySelector('#trkInventorySearchTable tbody');
+            tb.innerHTML = '';
+            items.slice(0, 50).forEach(i => {
+                tb.innerHTML += `<tr>
+                    <td>${i.sku}</td><td>${i.name}</td><td>${i.pack_size}</td>
+                    <td><button onclick="addItemToTruckQueue('${i.sku}', '${i.name.replace(/'/g, "\\'")}', ${i.pack_size})">Add</button></td>
+                </tr>`;
+            });
+        }
+
+        function filterLocalInventoryForTruck() {
+            const search = document.getElementById('trkItemSearch').value.toLowerCase();
+            const filtered = localInventoryCache.filter(i => 
+                (i.sku && i.sku.toLowerCase().includes(search)) || 
+                (i.name && i.name.toLowerCase().includes(search))
+            );
+            renderLocalInventoryForTruck(filtered);
+        }
+
+        function addItemToTruckQueue(sku, name, pack_size) {
+            const existing = plannedTruckItems.find(i => i.sku === sku);
+            if (existing) {
+                existing.qty++;
+            } else {
+                plannedTruckItems.push({ sku, name, pack_size, qty: 1 });
+            }
+            renderPlannedTruckItems();
+        }
+
+        function renderPlannedTruckItems() {
+            const tb = document.querySelector('#plannedTruckItemsTable tbody');
+            tb.innerHTML = '';
+            plannedTruckItems.forEach((it, idx) => {
+                tb.innerHTML += `<tr>
+                    <td>${it.sku}</td><td>${it.name}</td><td>${it.pack_size}</td>
+                    <td><input type="number" value="${it.qty}" style="width: 50px;" onchange="plannedTruckItems[${idx}].qty = parseInt(this.value)"></td>
+                    <td><span class="action-link delete" onclick="plannedTruckItems.splice(${idx},1); renderPlannedTruckItems();">REMOVE</span></td>
+                </tr>`;
+            });
+        }
+
+        async function submitDispatchTruck() {
+            const manifest_number = document.getElementById('manifestNumber').value;
+            let bol_number = document.getElementById('bolNumber').value;
+            if (plannedTruckItems.length === 0) return alert('Select at least one item.');
+            if (bol_number.length !== 15 && bol_number !== "") return alert('BOL must be 15 digits.');
+
+            if (bol_number === "") {
+                bol_number = '1' + Math.floor(Math.random() * 100000000000000).toString().padStart(14, '0');
+            }
+
+            const res = await apiFetch('/api/bopis/manifests/create', { 
+                method: 'POST', 
+                body: JSON.stringify({ manifest_number, bol_number, items: plannedTruckItems }) 
+            });
+
+            if (res.success) {
+                alert('Manifest #' + manifest_number + ' dispatched!');
+                document.getElementById('dispatchTruckModal').style.display = 'none';
+                loadManifests();
+            } else { alert('Error: ' + res.message); }
+        }
+        async function loadRolltainers() {
+            const rts = await apiFetch('/api/bopis/rolltainers');
+            const tb = document.querySelector('#rolltainersTable tbody'); tb.innerHTML = '';
+            rts.forEach(r => {
+                const statusColor = r.status === 'STOCKED' ? '#2ecc71' : '#e67e22';
+                tb.innerHTML += `<tr>
+                    <td>${r.barcode}</td>
+                    <td><span style="font-weight:bold; color:${statusColor}">${r.status}</span></td>
+                    <td>${new Date(r.created_at).toLocaleString()}</td>
+                    <td>
+                        <span class="action-link" onclick="openRolltainerDetails(${r.id}, '${r.barcode}')">VIEW</span>
+                        <span class="action-link delete" onclick="deleteRolltainer(${r.id})">DELETE</span>
+                    </td>
+                </tr>`;
+            });
+            document.getElementById('rtContextLabel').innerText = 'Context: Store #' + currentStoreId;
+        }
+
+        // --- DETAIL VIEWS ---
+        async function openManifestDetails(id, num) {
+            const res = await apiFetch('/api/bopis/manifests/' + id);
+            document.getElementById('viewDetailTitle').innerText = 'Manifest: ' + num;
+            document.getElementById('viewDetailHeaders').innerHTML = '<th>SKU</th><th>Name</th><th>Expected (Boxes)</th><th>Received</th>';
+            const tb = document.querySelector('#viewDetailTable tbody'); tb.innerHTML = '';
+            res.items.forEach(i => {
+                tb.innerHTML += `<tr><td>${i.sku}</td><td>${i.name}</td><td>${i.expected_packs}</td><td>${i.received_packs}</td></tr>`;
+            });
+            document.getElementById('detailPrintBtn').onclick = () => apiFetch('/api/bopis/manifest/print/' + id, { method: 'POST' });
+            
+            const receiveBtn = document.getElementById('detailReceiveBtn');
+            if (res.manifest.status !== 'COMPLETED') {
+                receiveBtn.style.display = 'block';
+                receiveBtn.onclick = async () => {
+                    const identifierText = res.manifest.bol_number ? 'BOL ' + res.manifest.bol_number : 'Manifest ' + res.manifest.manifest_number;
+                    if (confirm('Acknowledge full shipment for ' + identifierText + '? This will move all items to Backstock.')) {
+                        const bodyData = res.manifest.bol_number ? { bol_number: res.manifest.bol_number } : { manifest_id: res.manifest.id };
+                        const mres = await apiFetch('/api/bopis/manifest/master-receive', { 
+                            method: 'POST', 
+                            body: JSON.stringify(bodyData) 
+                        });
+                        alert(mres.message);
+                        document.getElementById('viewDetailModal').style.display = 'none';
+                        loadManifests();
+                    }
+                };
+            } else {
+                receiveBtn.style.display = 'none';
+            }
+
+            document.getElementById('viewDetailModal').style.display = 'flex';
+        }
+
+        async function openRolltainerDetails(id, barcode) {
+            const items = await apiFetch(`/api/bopis/rolltainers/${id}/items`);
+            document.getElementById('viewDetailTitle').innerText = 'Rolltainer: ' + barcode;
+            document.getElementById('viewDetailHeaders').innerHTML = '<th>SKU</th><th>Name</th><th>Boxes</th>';
+            const tb = document.querySelector('#viewDetailTable tbody'); tb.innerHTML = '';
+            items.forEach(i => {
+                tb.innerHTML += `<tr><td>${i.sku}</td><td>${i.name}</td><td>${i.qty_boxes}</td></tr>`;
+            });
+            document.getElementById('detailPrintBtn').onclick = () => apiFetch('/api/bopis/rolltainer/print/' + id, { method: 'POST' });
+            document.getElementById('viewDetailModal').style.display = 'flex';
+        }
+
+        async function deleteRolltainer(id) {
+            if(confirm('Delete this Rolltainer record?')) {
+                await apiFetch('/api/bopis/rolltainers/' + id, { method: 'DELETE' });
+                loadRolltainers();
+            }
+        }
+
+        async function openCreateRolltainerModal() {
+            document.getElementById('rtBarcode').value = 'RT-' + Math.floor(100 + Math.random() * 899);
+            rtLoadedItems = [];
+            renderRTLoadedItems();
+            
+            localInventoryCache = await apiFetch('/api/inventory/local');
+            renderLocalInventoryForRT(localInventoryCache);
+            document.getElementById('createRolltainerModal').style.display = 'flex';
+        }
+
+        function renderLocalInventoryForRT(items) {
+            const tb = document.querySelector('#rtInventorySearchTable tbody');
+            tb.innerHTML = '';
+            items.slice(0, 50).forEach(i => {
+                tb.innerHTML += `<tr>
+                    <td>${i.sku}</td><td>${i.name}</td><td>${i.quantity_backstock}</td>
+                    <td><button onclick="addItemToRTQueue('${i.sku}', '${i.name.replace(/'/g, "\\'")}')">Add</button></td>
+                </tr>`;
+            });
+        }
+
+        function filterLocalInventoryForRT() {
+            const search = document.getElementById('rtItemSearch').value.toLowerCase();
+            const filtered = localInventoryCache.filter(i => 
+                (i.sku && i.sku.toLowerCase().includes(search)) || 
+                (i.name && i.name.toLowerCase().includes(search))
+            );
+            renderLocalInventoryForRT(filtered);
+        }
+
+        function addItemToRTQueue(sku, name) {
+            const existing = rtLoadedItems.find(i => i.sku === sku);
+            if (existing) {
+                existing.qty++;
+            } else {
+                rtLoadedItems.push({ sku, name, qty: 1 });
+            }
+            renderRTLoadedItems();
+        }
+
+        function renderRTLoadedItems() {
+            const tb = document.querySelector('#rtLoadedItemsTable tbody');
+            tb.innerHTML = '';
+            rtLoadedItems.forEach((it, idx) => {
+                tb.innerHTML += `<tr>
+                    <td>${it.sku}</td><td>${it.name}</td>
+                    <td><input type="number" value="${it.qty}" style="width: 50px;" onchange="rtLoadedItems[${idx}].qty = parseInt(this.value)"></td>
+                    <td><span class="action-link delete" onclick="rtLoadedItems.splice(idx,1); renderRTLoadedItems();">REMOVE</span></td>
+                </tr>`;
+            });
+        }
+
+        async function submitCreateRolltainer() {
+            const barcode = document.getElementById('rtBarcode').value;
+            if (rtLoadedItems.length === 0) return alert('Select at least one item.');
+            
+            const res = await apiFetch('/api/bopis/rolltainers/create', { 
+                method: 'POST', 
+                body: JSON.stringify({ barcode, items: rtLoadedItems }) 
+            });
+            
+            if (res.success) {
+                alert('Rolltainer ' + barcode + ' saved!');
+                document.getElementById('createRolltainerModal').style.display = 'none';
+                loadRolltainers();
+            } else {
+                alert('Error: ' + res.message);
+            }
         }
 
         window.onload = loadStores;

@@ -65,6 +65,32 @@ public class MainTransactionScreen {
         
         TableColumn<ScannedItem, String> nameCol = new TableColumn<>("Name");
         nameCol.setCellValueFactory(cellData -> new SimpleStringProperty(cellData.getValue().getName()));
+        nameCol.setCellFactory(col -> new javafx.scene.control.TableCell<ScannedItem, String>() {
+            @Override
+            protected void updateItem(String item, boolean empty) {
+                super.updateItem(item, empty);
+                if (empty || item == null) {
+                    setGraphic(null);
+                    setText(null);
+                } else {
+                    ScannedItem scannedItem = getTableView().getItems().get(getIndex());
+                    if (scannedItem.getSaleId() != null && !scannedItem.getSaleId().isEmpty()) {
+                        VBox box = new VBox(2);
+                        Label nameLbl = new Label(item);
+                        nameLbl.setStyle("-fx-font-size: 16px; -fx-text-fill: #1e293b;");
+                        Label promoLbl = new Label("DG PROMOTION: " + scannedItem.getSaleId());
+                        promoLbl.setStyle("-fx-font-size: 12px; -fx-text-fill: #a855f7; -fx-font-weight: bold;");
+                        box.getChildren().addAll(nameLbl, promoLbl);
+                        setGraphic(box);
+                    } else {
+                        Label nameLbl = new Label(item);
+                        nameLbl.setStyle("-fx-font-size: 16px; -fx-text-fill: #1e293b;");
+                        setGraphic(nameLbl);
+                    }
+                    setText(null);
+                }
+            }
+        });
         
         TableColumn<ScannedItem, String> qtyCol = new TableColumn<>("Qty");
         qtyCol.setCellValueFactory(cellData -> new SimpleStringProperty(String.valueOf(cellData.getValue().getQuantity())));
@@ -234,7 +260,7 @@ public class MainTransactionScreen {
                     double origPrice = selected.getOriginalPrice();
                     int qty = selected.getQuantity();
                     int index = table.getItems().indexOf(selected);
-                    table.getItems().set(index, new ScannedItem(selected.getUpc(), selected.getName() + " (-10%)", newPrice, origPrice, qty));
+                    table.getItems().set(index, new ScannedItem(selected.getUpc(), selected.getName() + " (-10%)", newPrice, origPrice, selected.getSaleId(), qty));
                     DatabaseManager.logAction(eid, "DISCOUNT", selected.getUpc());
                     updateTotals(table, totalsBlock);
                     table.getSelectionModel().clearSelection();
@@ -414,7 +440,7 @@ public class MainTransactionScreen {
         double finalPrice = isReturnMode ? -data.price : data.price;
         String finalName = isReturnMode ? "RTN: " + data.name : data.name;
         
-        table.getItems().add(new ScannedItem(data.upc, finalName, finalPrice, data.price, 1));
+        table.getItems().add(new ScannedItem(data.upc, finalName, finalPrice, data.regPrice, data.saleId, 1));
         DatabaseManager.logAction(eid, isReturnMode ? "RETURN_MANUAL" : "SCAN", upc);
         isReturnMode = false;
         updateTotals(table, totalsBlock);
@@ -490,7 +516,7 @@ public class MainTransactionScreen {
         if (items.isEmpty()) return;
 
         for (DatabaseManager.ScannedItemData item : items) {
-            mainTable.getItems().add(new ScannedItem(item.upc, "REFUND: " + item.name, -item.price, item.price, 1));
+            mainTable.getItems().add(new ScannedItem(item.upc, "REFUND: " + item.name, -item.price, item.price, item.saleId, 1));
             DatabaseManager.logAction(eid, "REFUND_ITEM", item.upc);
         }
         updateTotals(mainTable, totalsBlock);
@@ -927,13 +953,15 @@ public class MainTransactionScreen {
         private final String name;
         private final double price;
         private final double originalPrice;
+        private final String saleId;
         private int quantity;
 
-        public ScannedItem(String upc, String name, double price, double originalPrice, int quantity) {
+        public ScannedItem(String upc, String name, double price, double originalPrice, String saleId, int quantity) {
             this.upc = upc;
             this.name = name;
             this.price = price;
             this.originalPrice = originalPrice;
+            this.saleId = saleId;
             this.quantity = quantity;
         }
 
@@ -941,6 +969,7 @@ public class MainTransactionScreen {
         public String getName() { return name; }
         public double getBasePrice() { return price; }
         public double getOriginalPrice() { return originalPrice; }
+        public String getSaleId() { return saleId; }
         public int getQuantity() { return quantity; }
         public void setQuantity(int quantity) { this.quantity = quantity; }
         public double getPriceValue() { return price * quantity; }
