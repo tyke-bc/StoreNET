@@ -9,6 +9,9 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
@@ -17,7 +20,9 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ExitToApp
 import androidx.compose.material.icons.automirrored.filled.Send
 import androidx.compose.material.icons.filled.*
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material3.*
+import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -67,6 +72,29 @@ fun ScanScreen(storeId: String, onBackToLauncher: () -> Unit) {
     var stockingStatusMessage by remember { mutableStateOf<String?>(null) }
     var stockingError by remember { mutableStateOf<String?>(null) }
 
+    // Markdown / Pricing Event State
+    var markdownEvents by remember { mutableStateOf<List<com.github.tyke_bc.hht.network.PricingEvent>>(emptyList()) }
+    var markdownItem by remember { mutableStateOf<InventoryItem?>(null) }
+    var showMarkdownDialog by remember { mutableStateOf(false) }
+
+    // Tasks State
+    var tasksList by remember { mutableStateOf<List<com.github.tyke_bc.hht.network.Task>>(emptyList()) }
+    var tasksLoading by remember { mutableStateOf(false) }
+    var tasksError by remember { mutableStateOf<String?>(null) }
+
+    // Cycle Count State
+    var cycleCountPogId by remember { mutableStateOf("") }
+    var cycleCountSection by remember { mutableStateOf("") }
+    var cycleCountPogName by remember { mutableStateOf("") }
+    var cycleCountItems by remember { mutableStateOf<List<CycleCountItemState>>(emptyList()) }
+    var cycleCountLoading by remember { mutableStateOf(false) }
+    var cycleCountError by remember { mutableStateOf<String?>(null) }
+    val cycleCountCounts = remember { androidx.compose.runtime.snapshots.SnapshotStateMap<String, String>() }
+    var showCycleCountDialog by remember { mutableStateOf(false) }
+    var cycleCountDialogItem by remember { mutableStateOf<CycleCountItemState?>(null) }
+    var cycleCountDialogInput by remember { mutableStateOf("") }
+    var cycleCountSubmitting by remember { mutableStateOf(false) }
+
     var upcInput by remember { mutableStateOf("") }
     var item by remember { mutableStateOf<InventoryItem?>(null) }
     var isLoading by remember { mutableStateOf(false) }
@@ -99,7 +127,19 @@ fun ScanScreen(storeId: String, onBackToLauncher: () -> Unit) {
 
                     if (response.success) {
                         item = response.item
-                        upcInput = item?.upc ?: item?.sku ?: "" // Auto-update input field with result
+                        upcInput = item?.upc ?: item?.sku ?: ""
+                        // Check for active markdown / pricing events
+                        val sku = item?.sku
+                        if (sku != null) {
+                            try {
+                                val evRes = RetrofitClient.instance.checkPricingEvents(storeId, sku)
+                                if (evRes.success && !evRes.events.isNullOrEmpty()) {
+                                    markdownEvents = evRes.events!!
+                                    markdownItem = item
+                                    showMarkdownDialog = true
+                                }
+                            } catch (_: Exception) {}
+                        }
                     } else {
                         errorMessage = "Item not found"
                         item = null
@@ -124,9 +164,46 @@ fun ScanScreen(storeId: String, onBackToLauncher: () -> Unit) {
     var detectedSku by remember { mutableStateOf("") }
     var detectedPackSize by remember { mutableIntStateOf(1) }
 
+    LaunchedEffect(cycleCountPogId, cycleCountSection) {
+        if (cycleCountPogId.isNotEmpty() && cycleCountSection.isNotEmpty()) {
+            cycleCountLoading = true
+            cycleCountError = null
+            cycleCountItems = emptyList()
+            try {
+                val res = RetrofitClient.instance.getCycleCountSection(storeId, cycleCountPogId, cycleCountSection)
+                if (res.success) {
+                    cycleCountPogName = res.pogName ?: ""
+                    cycleCountItems = res.items?.map {
+                        CycleCountItemState(it.sku, it.name, it.upc, it.shelf, it.faces, it.quantity)
+                    } ?: emptyList()
+                } else {
+                    cycleCountError = res.message ?: "Failed to load section"
+                }
+            } catch (e: Exception) {
+                cycleCountError = e.message ?: "Network error"
+            } finally {
+                cycleCountLoading = false
+            }
+        }
+    }
+
     LaunchedEffect(Unit) {
         MainActivity.scanEvents.collect { scannedData ->
             val input = scannedData.trim()
+
+            // Section barcodes can be scanned from any screen
+            if (input.startsWith("CYCL_")) {
+                val stripped = input.removePrefix("CYCL_")
+                val lastUnder = stripped.lastIndexOf('_')
+                if (lastUnder > 0) {
+                    cycleCountCounts.clear()
+                    cycleCountPogId = stripped.substring(0, lastUnder)
+                    cycleCountSection = stripped.substring(lastUnder + 1)
+                    selectedScreen = "Cycle Count"
+                }
+                return@collect
+            }
+
             if (selectedScreen == "Home") {
                 if (input.startsWith("RT-") || (input.length == 15 && input.startsWith("ROL"))) {
                     detectedRTBarcode = input
@@ -194,6 +271,14 @@ fun ScanScreen(storeId: String, onBackToLauncher: () -> Unit) {
                     "Adjustments" -> adjustmentUpcInput = scannedData
                     "Receiving" -> receivingBolInput = scannedData
                     "Counts/Recalls" -> countsUpcInput = scannedData
+                    "Cycle Count" -> {
+                        val found = cycleCountItems.find { it.upc == input || it.sku == input }
+                        if (found != null) {
+                            cycleCountDialogItem = found
+                            cycleCountDialogInput = cycleCountCounts[found.sku] ?: ""
+                            showCycleCountDialog = true
+                        }
+                    }
                 }
             }
         }
@@ -217,6 +302,13 @@ fun ScanScreen(storeId: String, onBackToLauncher: () -> Unit) {
             } catch (e: Exception) {
                 truckError = "Failed to load manifests: ${e.message}"
             } finally { isTruckLoading = false }
+        }
+        if (selectedScreen == "Tasks") {
+            tasksLoading = true
+            tasksError = null
+            try { tasksList = RetrofitClient.instance.getTasks(storeId) }
+            catch (e: Exception) { tasksError = e.message }
+            finally { tasksLoading = false }
         }
         if (selectedScreen == "Home" && selectedTab == 5) {
             coroutineScope.launch {
@@ -248,7 +340,7 @@ fun ScanScreen(storeId: String, onBackToLauncher: () -> Unit) {
                         Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
                             Text(text = "STORE: $storeId", fontSize = 18.sp, color = Color.Black)
                             Row(verticalAlignment = Alignment.CenterVertically) {
-                                Text(text = "Default User", fontSize = 18.sp, color = Color.Black)
+                                Text(text = MainActivity.loggedInUser, fontSize = 18.sp, color = Color.Black)
                                 Spacer(modifier = Modifier.width(16.dp))
                                 Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.clickable { onBackToLauncher() }) {
                                     Icon(Icons.AutoMirrored.Filled.ExitToApp, "Logout", tint = Color.Black, modifier = Modifier.size(28.dp))
@@ -417,6 +509,135 @@ fun ScanScreen(storeId: String, onBackToLauncher: () -> Unit) {
                                 }
                             )
                         }
+                        "Tasks" -> {
+                            val priorityColor = mapOf("HIGH" to Color(0xFFEF4444), "NORMAL" to Color(0xFFF59E0B), "LOW" to Color(0xFF94A3B8))
+                            Column(modifier = Modifier.fillMaxSize()) {
+                                Surface(color = Color(0xFF1E3A5F), modifier = Modifier.fillMaxWidth()) {
+                                    Text("Open Tasks", color = Color.White, fontWeight = FontWeight.Bold, fontSize = 16.sp, modifier = Modifier.padding(12.dp))
+                                }
+                                when {
+                                    tasksLoading -> Box(Modifier.fillMaxSize(), Alignment.Center) { CircularProgressIndicator() }
+                                    tasksError != null -> Box(Modifier.fillMaxSize(), Alignment.Center) { Text("Error: $tasksError", color = Color.Red) }
+                                    tasksList.filter { it.status == "OPEN" }.isEmpty() -> Box(Modifier.fillMaxSize(), Alignment.Center) { Text("No open tasks.", color = Color.Gray) }
+                                    else -> LazyColumn(modifier = Modifier.fillMaxSize().padding(8.dp)) {
+                                        items(tasksList.filter { it.status == "OPEN" }) { task ->
+                                            Surface(
+                                                shape = RoundedCornerShape(6.dp),
+                                                color = Color.White,
+                                                border = BorderStroke(1.dp, priorityColor[task.priority] ?: Color(0xFFCBD5E1)),
+                                                modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp)
+                                            ) {
+                                                Row(modifier = Modifier.padding(12.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.SpaceBetween) {
+                                                    Column(modifier = Modifier.weight(1f)) {
+                                                        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                                                            Surface(shape = RoundedCornerShape(4.dp), color = priorityColor[task.priority] ?: Color.Gray) {
+                                                                Text(task.priority, color = Color.White, fontSize = 10.sp, fontWeight = FontWeight.Bold, modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp))
+                                                            }
+                                                            Text(task.title, fontWeight = FontWeight.SemiBold, fontSize = 14.sp)
+                                                        }
+                                                        if (!task.description.isNullOrBlank()) Text(task.description, fontSize = 12.sp, color = Color(0xFF64748B), modifier = Modifier.padding(top = 2.dp))
+                                                        if (task.assignedName != null || task.dueDate != null) {
+                                                            Text(listOfNotNull(task.assignedName?.let { "Assigned: $it" }, task.dueDate?.take(10)?.let { "Due: $it" }).joinToString("  ·  "), fontSize = 11.sp, color = Color(0xFF94A3B8), modifier = Modifier.padding(top = 2.dp))
+                                                        }
+                                                    }
+                                                    Button(
+                                                        onClick = {
+                                                            coroutineScope.launch {
+                                                                try {
+                                                                    RetrofitClient.instance.updateTask(storeId, task.id, com.github.tyke_bc.hht.network.UpdateTaskRequest("DONE"))
+                                                                    tasksList = RetrofitClient.instance.getTasks(storeId)
+                                                                } catch (_: Exception) {}
+                                                            }
+                                                        },
+                                                        colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF10B981)),
+                                                        modifier = Modifier.padding(start = 8.dp)
+                                                    ) { Text("Done", fontSize = 12.sp) }
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                        "Cycle Count" -> {
+                            val listState = rememberLazyListState()
+                            val countedCount = cycleCountItems.count { cycleCountCounts.containsKey(it.sku) }
+                            Column(modifier = Modifier.fillMaxSize()) {
+                                // Header bar
+                                Surface(color = Color(0xFF1E3A5F), modifier = Modifier.fillMaxWidth()) {
+                                    Row(modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+                                        Column {
+                                            Text("POG $cycleCountPogId · SEC $cycleCountSection", color = Color.White, fontWeight = FontWeight.Bold, fontSize = 15.sp)
+                                            if (cycleCountPogName.isNotEmpty()) Text(cycleCountPogName, color = Color.White.copy(alpha = 0.75f), fontSize = 12.sp)
+                                        }
+                                        Text("$countedCount / ${cycleCountItems.size} counted", color = Color(0xFF90CAF9), fontWeight = FontWeight.Bold, fontSize = 13.sp)
+                                    }
+                                }
+                                when {
+                                    cycleCountLoading -> Box(modifier = Modifier.weight(1f).fillMaxWidth(), contentAlignment = Alignment.Center) { CircularProgressIndicator() }
+                                    cycleCountError != null -> Box(modifier = Modifier.weight(1f).fillMaxWidth(), contentAlignment = Alignment.Center) { Text("Error: $cycleCountError", color = Color.Red) }
+                                    cycleCountItems.isEmpty() -> Box(modifier = Modifier.weight(1f).fillMaxWidth(), contentAlignment = Alignment.Center) { Text("No items in this section", color = Color.Gray) }
+                                    else -> LazyColumn(state = listState, modifier = Modifier.weight(1f).padding(horizontal = 8.dp, vertical = 4.dp)) {
+                                        items(cycleCountItems) { ccItem ->
+                                            val counted = cycleCountCounts[ccItem.sku]
+                                            val isCounted = counted != null
+                                            Surface(
+                                                shape = RoundedCornerShape(6.dp),
+                                                color = if (isCounted) Color(0xFFE8F5E9) else Color.White,
+                                                border = BorderStroke(1.dp, if (isCounted) Color(0xFF66BB6A) else Color(0xFFCBD5E1)),
+                                                modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp).clickable {
+                                                    cycleCountDialogItem = ccItem
+                                                    cycleCountDialogInput = cycleCountCounts[ccItem.sku] ?: ""
+                                                    showCycleCountDialog = true
+                                                }
+                                            ) {
+                                                Row(modifier = Modifier.padding(horizontal = 12.dp, vertical = 10.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.SpaceBetween) {
+                                                    Column(modifier = Modifier.weight(1f)) {
+                                                        Text(ccItem.name, fontWeight = FontWeight.SemiBold, fontSize = 13.sp, color = Color(0xFF1E293B))
+                                                        Text("Shelf ${ccItem.shelf}  ·  SKU ${ccItem.sku}", fontSize = 11.sp, color = Color(0xFF64748B))
+                                                    }
+                                                    Column(horizontalAlignment = Alignment.End) {
+                                                        if (isCounted) Text(counted!!, fontWeight = FontWeight.Bold, fontSize = 20.sp, color = Color(0xFF2E7D32))
+                                                        else Text("—", fontSize = 20.sp, color = Color(0xFFCBD5E1))
+                                                        Text("sys: ${ccItem.systemQty}", fontSize = 10.sp, color = Color(0xFF94A3B8))
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                                // Submit bar
+                                Surface(color = Color(0xFFF8FAFC), shadowElevation = 8.dp) {
+                                    Row(modifier = Modifier.fillMaxWidth().padding(12.dp), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                                        OutlinedButton(onClick = { selectedScreen = "Home"; cycleCountCounts.clear() }, modifier = Modifier.weight(1f)) { Text("Cancel") }
+                                        Button(
+                                            onClick = {
+                                                coroutineScope.launch {
+                                                    cycleCountSubmitting = true
+                                                    try {
+                                                        val entries = cycleCountCounts.entries.mapNotNull { (sku, v) ->
+                                                            v.toIntOrNull()?.let { com.github.tyke_bc.hht.network.CycleCountEntry(sku, it) }
+                                                        }
+                                                        if (entries.isNotEmpty()) {
+                                                            RetrofitClient.instance.submitCycleCount(storeId, com.github.tyke_bc.hht.network.CycleCountSubmitRequest(entries))
+                                                        }
+                                                        selectedScreen = "Home"
+                                                        cycleCountCounts.clear()
+                                                    } catch (e: Exception) {
+                                                        cycleCountError = e.message
+                                                    } finally { cycleCountSubmitting = false }
+                                                }
+                                            },
+                                            enabled = countedCount > 0 && !cycleCountSubmitting,
+                                            modifier = Modifier.weight(2f)
+                                        ) {
+                                            if (cycleCountSubmitting) CircularProgressIndicator(modifier = Modifier.size(18.dp), strokeWidth = 2.dp, color = Color.White)
+                                            else Text("Submit $countedCount Count${if (countedCount != 1) "s" else ""}")
+                                        }
+                                    }
+                                }
+                            }
+                        }
                         else -> {
                             Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                                 Text("$selectedScreen Screen Coming Soon", color = Color.Gray, fontSize = 18.sp)
@@ -444,9 +665,77 @@ fun ScanScreen(storeId: String, onBackToLauncher: () -> Unit) {
                         NavMenuItem(Icons.Default.Inventory, "PRP Returns", Color(0xFF5D4037)) { selectedScreen = "PRP Returns"; isMenuOpen = false }
                         HorizontalDivider(modifier = Modifier.padding(vertical = 8.dp))
                         NavMenuItem(Icons.Default.ShoppingCart, "Order Picking", Color(0xFF10B981)) { selectedScreen = "Order Picking"; isMenuOpen = false }
+                        NavMenuItem(Icons.Default.FactCheck, "Tasks", Color(0xFF6366F1)) { selectedScreen = "Tasks"; isMenuOpen = false }
                     }
                 }
             }
+        }
+
+        if (showMarkdownDialog && markdownItem != null && markdownEvents.isNotEmpty()) {
+            val ev = markdownEvents.first()
+            val mi = markdownItem!!
+            AlertDialog(
+                onDismissRequest = { showMarkdownDialog = false },
+                title = { Text("Markdown Available", color = Color(0xFF10B981), fontWeight = FontWeight.Bold) },
+                text = {
+                    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                        Text(mi.name, fontWeight = FontWeight.SemiBold, fontSize = 14.sp)
+                        HorizontalDivider()
+                        Text(ev.name, fontSize = 13.sp, fontWeight = FontWeight.Medium)
+                        Text(ev.type, fontSize = 11.sp, color = Color.Gray)
+                        Spacer(Modifier.height(4.dp))
+                        Row(horizontalArrangement = Arrangement.spacedBy(16.dp), verticalAlignment = Alignment.CenterVertically) {
+                            Text("$${"%.2f".format(mi.price)}", fontSize = 14.sp, color = Color.Gray, textDecoration = TextDecoration.LineThrough)
+                            Text("$${"%.2f".format(ev.price)}", fontSize = 24.sp, fontWeight = FontWeight.Bold, color = Color(0xFF10B981))
+                        }
+                    }
+                },
+                confirmButton = {
+                    Button(onClick = {
+                        coroutineScope.launch {
+                            try {
+                                RetrofitClient.instance.printShelfLabel(storeId, com.github.tyke_bc.hht.network.PrintShelfLabelRequest(
+                                    brand = null, name = mi.name, variant = null, size = null,
+                                    upc = mi.upc ?: mi.sku, price = ev.price,
+                                    unitPriceUnit = mi.unitPriceUnit, taxable = mi.taxable,
+                                    pogDate = mi.pogDate, location = mi.location,
+                                    faces = mi.faces, pogInfo = mi.pogInfo, regPrice = mi.price
+                                ))
+                            } catch (_: Exception) {}
+                            showMarkdownDialog = false
+                        }
+                    }, colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF10B981))) { Text("Print Label") }
+                },
+                dismissButton = { TextButton(onClick = { showMarkdownDialog = false }) { Text("Dismiss") } }
+            )
+        }
+
+        if (showCycleCountDialog && cycleCountDialogItem != null) {
+            AlertDialog(
+                onDismissRequest = { showCycleCountDialog = false },
+                title = { Text(cycleCountDialogItem!!.name, fontSize = 15.sp) },
+                text = {
+                    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Text("Shelf ${cycleCountDialogItem!!.shelf}  ·  System qty: ${cycleCountDialogItem!!.systemQty}", fontSize = 12.sp, color = Color.Gray)
+                        OutlinedTextField(
+                            value = cycleCountDialogInput,
+                            onValueChange = { cycleCountDialogInput = it.filter { c -> c.isDigit() } },
+                            label = { Text("Count on shelf") },
+                            singleLine = true,
+                            keyboardOptions = androidx.compose.foundation.text.KeyboardOptions(keyboardType = androidx.compose.ui.text.input.KeyboardType.Number)
+                        )
+                    }
+                },
+                confirmButton = {
+                    Button(onClick = {
+                        cycleCountDialogItem?.let { cycleCountCounts[it.sku] = cycleCountDialogInput }
+                        showCycleCountDialog = false
+                    }, enabled = cycleCountDialogInput.isNotEmpty()) { Text("Save") }
+                },
+                dismissButton = {
+                    TextButton(onClick = { showCycleCountDialog = false }) { Text("Cancel") }
+                }
+            )
         }
 
         if (showReceivingDialog) {
@@ -1130,3 +1419,12 @@ fun PickingDetailContent(
         }
     }
 }
+
+data class CycleCountItemState(
+    val sku: String,
+    val name: String,
+    val upc: String?,
+    val shelf: String,
+    val faces: String?,
+    val systemQty: Int
+)

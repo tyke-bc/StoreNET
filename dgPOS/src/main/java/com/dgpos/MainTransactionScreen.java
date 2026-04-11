@@ -19,12 +19,14 @@ import javafx.stage.Modality;
 import javafx.stage.StageStyle;
 import javafx.application.Platform;
 import javafx.scene.paint.Color;
+import java.util.function.Consumer;
 
 public class MainTransactionScreen {
 
     private static boolean isReturnMode = false;
 
     public static void show(Stage primaryStage, String eid) {
+        isReturnMode = false; // Always reset on new session — prevents bleed-across after logout
         BorderPane root = new BorderPane();
         root.getStyleClass().add("root-pane");
 
@@ -260,7 +262,7 @@ public class MainTransactionScreen {
                     double origPrice = selected.getOriginalPrice();
                     int qty = selected.getQuantity();
                     int index = table.getItems().indexOf(selected);
-                    table.getItems().set(index, new ScannedItem(selected.getUpc(), selected.getName() + " (-10%)", newPrice, origPrice, selected.getSaleId(), qty));
+                    table.getItems().set(index, new ScannedItem(selected.getUpc(), selected.getSku(), selected.getName() + " (-10%)", newPrice, origPrice, selected.getSaleId(), selected.isTaxable(), qty));
                     DatabaseManager.logAction(eid, "DISCOUNT", selected.getUpc());
                     updateTotals(table, totalsBlock);
                     table.getSelectionModel().clearSelection();
@@ -269,21 +271,8 @@ public class MainTransactionScreen {
             scannerInput.requestFocus();
         });
 
-        Button suspendBtn = createButton("Suspend", "info-btn");
-        suspendBtn.setOnAction(e -> {
-            requireKeyHolder(primaryStage, eid, () -> {
-                if (!table.getItems().isEmpty()) {
-                    table.getItems().clear();
-                    DatabaseManager.logAction(eid, "SUSPEND", "ALL");
-                    updateTotals(table, totalsBlock);
-                }
-            });
-            scannerInput.requestFocus();
-        });
-        
         actionGrid.add(returnBtn, 1, 0);
         actionGrid.add(discountBtn, 2, 0);
-        actionGrid.add(suspendBtn, 3, 0);
 
         // Action Buttons (Column 4 - right of numpad)
         Button clearBtn = createButton("Clear", "danger-btn");
@@ -379,10 +368,15 @@ public class MainTransactionScreen {
 
     private static void completeTransaction(Stage owner, TableView<ScannedItem> table, VBox totalsBlock, String eid, String tenderType) {
         DatabaseManager.logAction(eid, "TENDER_" + tenderType, "ALL");
-        
+
         double subtotal = 0;
-        for (ScannedItem item : table.getItems()) subtotal += item.getPriceValue();
-        double tax = subtotal * 0.055;
+        double taxableSubtotal = 0;
+        for (ScannedItem item : table.getItems()) {
+            double val = item.getPriceValue();
+            subtotal += val;
+            if (item.isTaxable()) taxableSubtotal += val;
+        }
+        double tax = taxableSubtotal * 0.055;
         double total = subtotal + tax;
 
         long receiptId = DatabaseManager.createReceipt(eid, tenderType, total);
@@ -439,8 +433,8 @@ public class MainTransactionScreen {
         DatabaseManager.ScannedItemData data = DatabaseManager.lookupItem(upc);
         double finalPrice = isReturnMode ? -data.price : data.price;
         String finalName = isReturnMode ? "RTN: " + data.name : data.name;
-        
-        table.getItems().add(new ScannedItem(data.upc, finalName, finalPrice, data.regPrice, data.saleId, 1));
+
+        table.getItems().add(new ScannedItem(data.upc, data.sku, finalName, finalPrice, data.regPrice, data.saleId, data.taxable, 1));
         DatabaseManager.logAction(eid, isReturnMode ? "RETURN_MANUAL" : "SCAN", upc);
         isReturnMode = false;
         updateTotals(table, totalsBlock);
@@ -516,7 +510,7 @@ public class MainTransactionScreen {
         if (items.isEmpty()) return;
 
         for (DatabaseManager.ScannedItemData item : items) {
-            mainTable.getItems().add(new ScannedItem(item.upc, "REFUND: " + item.name, -item.price, item.price, item.saleId, 1));
+            mainTable.getItems().add(new ScannedItem(item.upc, item.sku, "REFUND: " + item.name, -item.price, item.price, item.saleId, item.taxable, 1));
             DatabaseManager.logAction(eid, "REFUND_ITEM", item.upc);
         }
         updateTotals(mainTable, totalsBlock);
@@ -688,11 +682,25 @@ public class MainTransactionScreen {
         Button trainingModeBtn = createMenuButton("Training Mode");
         trainingModeBtn.setOnAction(e -> {
             logManagerAction(owner, eid, "TRAINING_MODE", stage);
-            showNotification(owner, "Training Mode", "Mode Enabled", 
+            showNotification(owner, "Training Mode", "Mode Enabled",
                 "Have fun breaking things! Everything is fake now.\n(Just kidding, logging is still real)");
         });
 
-        tillOps.getChildren().addAll(tillTitle, restartTillBtn, trainingModeBtn);
+        Button printLabelBtn = createMenuButton("Print Shelf\nLabel");
+        printLabelBtn.setOnAction(e -> {
+            showUpcInputDialog(stage, upc -> {
+                stage.close();
+                DatabaseManager.LabelData labelData = DatabaseManager.lookupLabelData(upc);
+                if (labelData == null) {
+                    showNotification(owner, "Label Error", "Item Not Found", "No inventory record found for:\n" + upc);
+                    return;
+                }
+                PrinterService.printLabel(labelData);
+                showNotification(owner, "Label Printed", "Sending to Printer", "Shelf label queued for:\n" + labelData.name);
+            });
+        });
+
+        tillOps.getChildren().addAll(tillTitle, restartTillBtn, trainingModeBtn, printLabelBtn);
 
         columns.getChildren().addAll(moneyOps, tillOps);
 
@@ -817,6 +825,58 @@ public class MainTransactionScreen {
         stage.showAndWait();
     }
 
+    private static void showUpcInputDialog(Stage owner, Consumer<String> onSubmit) {
+        Stage stage = new Stage();
+        stage.initOwner(owner);
+        stage.initModality(Modality.WINDOW_MODAL);
+        stage.initStyle(StageStyle.UNDECORATED);
+
+        VBox root = new VBox(20);
+        root.setAlignment(Pos.CENTER);
+        root.setPadding(new Insets(30));
+        root.setStyle("-fx-background-color: #1e293b; -fx-border-color: #10b981; -fx-border-width: 4; -fx-background-radius: 10; -fx-border-radius: 10;");
+
+        Label title = new Label("PRINT SHELF LABEL");
+        title.setStyle("-fx-text-fill: white; -fx-font-size: 24px; -fx-font-weight: bold;");
+
+        Label prompt = new Label("Scan or enter UPC / SKU:");
+        prompt.setStyle("-fx-text-fill: #10b981; -fx-font-size: 18px;");
+
+        TextField input = new TextField();
+        input.setPrefWidth(300);
+        input.setStyle("-fx-font-size: 18px; -fx-padding: 8;");
+
+        HBox btnRow = new HBox(15);
+        btnRow.setAlignment(Pos.CENTER);
+
+        Button printBtn = new Button("Print Label");
+        printBtn.setPrefSize(180, 50);
+        printBtn.setStyle("-fx-background-color: #10b981; -fx-text-fill: white; -fx-font-size: 18px; -fx-font-weight: bold; -fx-cursor: hand;");
+        printBtn.setOnAction(e -> {
+            String value = input.getText().trim();
+            if (!value.isEmpty()) {
+                stage.close();
+                onSubmit.accept(value);
+            }
+        });
+
+        Button cancelBtn = new Button("Cancel");
+        cancelBtn.setPrefSize(180, 50);
+        cancelBtn.setStyle("-fx-background-color: #ef4444; -fx-text-fill: white; -fx-font-size: 18px; -fx-font-weight: bold; -fx-cursor: hand;");
+        cancelBtn.setOnAction(e -> stage.close());
+
+        input.setOnAction(e -> printBtn.fire());
+
+        btnRow.getChildren().addAll(printBtn, cancelBtn);
+        root.getChildren().addAll(title, prompt, input, btnRow);
+
+        Scene scene = new Scene(root);
+        scene.setFill(Color.TRANSPARENT);
+        stage.setScene(scene);
+        Platform.runLater(input::requestFocus);
+        stage.showAndWait();
+    }
+
     private static void showNotification(Stage owner, String titleText, String headerText, String contentText) {
         Stage stage = new Stage();
         stage.initOwner(owner);
@@ -906,10 +966,13 @@ public class MainTransactionScreen {
 
     private static void updateTotals(TableView<ScannedItem> table, VBox totalsBlock) {
         double subtotal = 0;
+        double taxableSubtotal = 0;
         for (ScannedItem item : table.getItems()) {
-            subtotal += item.getPriceValue();
+            double val = item.getPriceValue();
+            subtotal += val;
+            if (item.isTaxable()) taxableSubtotal += val;
         }
-        double tax = subtotal * 0.055; // 5.5% tax
+        double tax = taxableSubtotal * 0.055;
         double total = subtotal + tax;
 
         // update the labels inside totalsBlock
@@ -950,26 +1013,32 @@ public class MainTransactionScreen {
     // Item class matching the DB data
     public static class ScannedItem {
         private final String upc;
+        private final String sku;
         private final String name;
         private final double price;
         private final double originalPrice;
         private final String saleId;
+        private final boolean taxable;
         private int quantity;
 
-        public ScannedItem(String upc, String name, double price, double originalPrice, String saleId, int quantity) {
+        public ScannedItem(String upc, String sku, String name, double price, double originalPrice, String saleId, boolean taxable, int quantity) {
             this.upc = upc;
+            this.sku = sku != null ? sku : upc;
             this.name = name;
             this.price = price;
             this.originalPrice = originalPrice;
             this.saleId = saleId;
+            this.taxable = taxable;
             this.quantity = quantity;
         }
 
         public String getUpc() { return upc; }
+        public String getSku() { return sku; }
         public String getName() { return name; }
         public double getBasePrice() { return price; }
         public double getOriginalPrice() { return originalPrice; }
         public String getSaleId() { return saleId; }
+        public boolean isTaxable() { return taxable; }
         public int getQuantity() { return quantity; }
         public void setQuantity(int quantity) { this.quantity = quantity; }
         public double getPriceValue() { return price * quantity; }

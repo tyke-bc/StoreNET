@@ -29,6 +29,9 @@
             <div class="nav-item" onclick="switchModule('online-orders', this)" style="color: #10b981; font-weight: bold;">Online Orders (BOPIS)</div>
             <div class="nav-item" onclick="switchModule('truck-receiving', this)">Truck Deliveries</div>
             <div class="nav-item" onclick="switchModule('rolltainers', this)">Rolltainer Builder</div>
+            <div class="nav-item" onclick="switchModule('schedule', this)" style="color: #ffd100; font-weight: bold;">Employee Schedule</div>
+            <div class="nav-item" onclick="switchModule('promotions', this)" style="color: #f59e0b; font-weight: bold;">Promotions / Coupons</div>
+            <div class="nav-item" onclick="switchModule('tasks', this)">Store Tasks</div>
             
             <div style="margin-top: 50px; padding: 20px; border-top: 1px solid #3e4f5f;">
                 <label style="font-size: 10px; display: block; margin-bottom: 5px; color: #ffd100;">MANAGEMENT CONTEXT</label>
@@ -158,6 +161,7 @@
                                 <option value="F">F</option><option value="G">G</option><option value="H">H</option><option value="I">I</option><option value="J">J</option>
                             </select>
                         </div>
+                        <button onclick="printSectionBarcode()" title="Print cycle count barcode for this section to the store printer">🖨 Section Barcode</button>
                         <div>
                             <label style="font-weight: bold; margin-right: 5px;">Shelf/Peg:</label>
                             <select id="pogShelfSelect" onchange="loadPogItems()" style="padding: 5px;">
@@ -286,7 +290,179 @@
                     <tbody></tbody>
                 </table>
             </div>
+
+            <!-- SCHEDULE MODULE -->
+            <div id="module-schedule" class="module-view" style="display: none;">
+                <div class="content-header">
+                    <h1>Employee Schedule</h1>
+                    <div style="display:flex; gap:10px; align-items:center;">
+                        <button onclick="scheduleNav(-1)" style="padding: 6px 14px;">&lt; Prev Week</button>
+                        <span id="scheduleWeekLabel" style="font-weight:bold; font-size:16px;"></span>
+                        <button onclick="scheduleNav(1)" style="padding: 6px 14px;">Next Week &gt;</button>
+                        <button class="primary" onclick="openShiftModal(null)" style="margin-left:20px;">+ Add Shift</button>
+                    </div>
+                </div>
+
+                <div id="scheduleGrid" style="display:grid; grid-template-columns: repeat(7, 1fr); gap:8px; margin-top:12px;"></div>
+
+                <!-- Time Punches sub-section -->
+                <div style="margin-top:30px;">
+                    <h3 style="color:#1e293b;">Time Punch Log</h3>
+                    <div style="display:flex; gap:10px; margin-bottom:8px;">
+                        <input type="date" id="punchDateFilter" onchange="loadTimePunches()">
+                        <select id="punchEidFilter" onchange="loadTimePunches()"><option value="">All Employees</option></select>
+                    </div>
+                    <table class="data-table" id="punchesTable">
+                        <thead><tr><th>Employee</th><th>EID</th><th>Action</th><th>Timestamp</th></tr></thead>
+                        <tbody></tbody>
+                    </table>
+                </div>
+            </div>
+
+            <!-- PROMOTIONS MODULE -->
+            <div id="module-promotions" class="module-view" style="display: none;">
+                <div class="content-header">
+                    <h1>Promotions &amp; Coupons</h1>
+                </div>
+                <p style="color:#64748b; margin-bottom:16px;">Active promotions print as coupons at the POS after each transaction. Only <strong>one active promotion per type</strong> at a time — creating a new one automatically deactivates the old one.</p>
+
+                <div style="display:grid; grid-template-columns: 1fr 1fr; gap:20px;">
+                    <!-- Weekly Deal Card -->
+                    <div class="card">
+                        <h3 style="color:#3b82f6; margin-top:0;">Weekly Deal</h3>
+                        <div id="weeklyPromoDisplay">Loading...</div>
+                        <button class="primary" onclick="openPromoModal('WEEKLY')" style="margin-top:12px; width:100%;">Set New Weekly Deal</button>
+                    </div>
+                    <!-- Saturday Special Card -->
+                    <div class="card">
+                        <h3 style="color:#f59e0b; margin-top:0;">Saturday Special</h3>
+                        <div id="saturdayPromoDisplay">Loading...</div>
+                        <button class="primary" onclick="openPromoModal('SATURDAY')" style="margin-top:12px; width:100%; background:#f59e0b;">Set New Saturday Special</button>
+                    </div>
+                </div>
+
+                <h3 style="margin-top:30px;">All Promotions History</h3>
+                <table class="data-table" id="promotionsTable">
+                    <thead><tr><th>Type</th><th>Title</th><th>Deal</th><th>Valid Date</th><th>Active</th><th>Actions</th></tr></thead>
+                    <tbody></tbody>
+                </table>
+            </div>
+
+            <div id="module-tasks" class="module-view" style="display: none;">
+                <div class="content-header" style="display:flex; justify-content:space-between; align-items:center;">
+                    <h1>Store Tasks</h1>
+                    <button class="primary" onclick="openTaskModal()">+ New Task</button>
+                </div>
+                <div style="display:flex; gap:8px; margin-bottom:16px;">
+                    <button onclick="loadTasks('OPEN')" id="tasksFilterOpen" class="primary">Open</button>
+                    <button onclick="loadTasks('DONE')" id="tasksFilterDone">Completed</button>
+                </div>
+                <table class="data-table" id="tasksTable">
+                    <thead><tr><th>Priority</th><th>Title</th><th>Assigned To</th><th>Due Date</th><th>Actions</th></tr></thead>
+                    <tbody></tbody>
+                </table>
+            </div>
+
         </main>
+    </div>
+
+    <!-- CREATE TASK MODAL -->
+    <div id="taskModal" style="display:none; position:fixed; top:0; left:0; width:100%; height:100%; background:rgba(0,0,0,0.5); justify-content:center; align-items:center; z-index:1000;">
+        <div class="card" style="width:420px;">
+            <h3>New Task</h3>
+            <div style="display:flex; flex-direction:column; gap:10px;">
+                <input type="text" id="taskTitle" placeholder="Title*" style="padding:8px;">
+                <textarea id="taskDescription" placeholder="Description (optional)" style="padding:8px; height:70px; resize:vertical;"></textarea>
+                <select id="taskAssignedEid" style="padding:8px;"><option value="">Unassigned</option></select>
+                <input type="date" id="taskDueDate" style="padding:8px;">
+                <select id="taskPriority" style="padding:8px;">
+                    <option value="NORMAL">Normal</option>
+                    <option value="HIGH">High</option>
+                    <option value="LOW">Low</option>
+                </select>
+                <div style="display:flex; gap:8px; margin-top:4px;">
+                    <button class="primary" onclick="submitTask()" style="flex:1;">Create</button>
+                    <button onclick="document.getElementById('taskModal').style.display='none'" style="flex:1;">Cancel</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- SHIFT MODAL -->
+    <div id="shiftModal" style="display:none; position:fixed; top:0; left:0; width:100%; height:100%; background:rgba(0,0,0,0.5); justify-content:center; align-items:center; z-index:1000;">
+        <div class="card" style="width:420px; background:#fff;">
+            <h3 id="shiftModalTitle">Add Shift</h3>
+            <input type="hidden" id="shiftEditId">
+            <div class="input-group" style="margin-bottom:10px;">
+                <label>Employee</label>
+                <select id="shiftEid" style="width:100%; padding:6px;"></select>
+            </div>
+            <div class="input-group" style="margin-bottom:10px;">
+                <label>Date</label>
+                <input type="date" id="shiftDate" style="width:100%; padding:6px;">
+            </div>
+            <div style="display:grid; grid-template-columns:1fr 1fr; gap:10px; margin-bottom:10px;">
+                <div>
+                    <label>Start Time</label>
+                    <input type="time" id="shiftStart" style="width:100%; padding:6px;">
+                </div>
+                <div>
+                    <label>End Time</label>
+                    <input type="time" id="shiftEnd" style="width:100%; padding:6px;">
+                </div>
+            </div>
+            <div class="input-group" style="margin-bottom:10px;">
+                <label>Position</label>
+                <select id="shiftPosition" style="width:100%; padding:6px;">
+                    <option value="SA">Sales Associate (SA)</option>
+                    <option value="LSA">Lead Sales Associate (LSA)</option>
+                    <option value="ASM">Assistant Store Manager (ASM)</option>
+                    <option value="SM">Store Manager (SM)</option>
+                </select>
+            </div>
+            <div class="input-group" style="margin-bottom:14px;">
+                <label>Notes (optional)</label>
+                <input type="text" id="shiftNotes" style="width:100%; padding:6px;" placeholder="e.g. Truck night, Opening">
+            </div>
+            <div style="display:flex; gap:10px;">
+                <button class="primary" onclick="saveShift()" style="flex:1;">Save</button>
+                <button class="danger" onclick="document.getElementById('shiftModal').style.display='none'" style="flex:1;">Cancel</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- PROMOTION MODAL -->
+    <div id="promoModal" style="display:none; position:fixed; top:0; left:0; width:100%; height:100%; background:rgba(0,0,0,0.5); justify-content:center; align-items:center; z-index:1000;">
+        <div class="card" style="width:460px; background:#fff;">
+            <h3 id="promoModalTitle">New Promotion</h3>
+            <input type="hidden" id="promoType">
+            <div class="input-group" style="margin-bottom:10px;">
+                <label>Title (prints on coupon)</label>
+                <input type="text" id="promoTitle" style="width:100%; padding:6px;" placeholder="e.g. THIS SATURDAY ONLY!">
+            </div>
+            <div style="display:grid; grid-template-columns:1fr 1fr; gap:10px; margin-bottom:10px;">
+                <div>
+                    <label>Discount ($)</label>
+                    <input type="number" id="promoDiscount" step="0.01" style="width:100%; padding:6px;" placeholder="5.00">
+                </div>
+                <div>
+                    <label>Minimum Purchase ($)</label>
+                    <input type="number" id="promoMinimum" step="0.01" style="width:100%; padding:6px;" placeholder="25.00">
+                </div>
+            </div>
+            <div class="input-group" style="margin-bottom:10px;">
+                <label>Valid Date (prints on coupon)</label>
+                <input type="text" id="promoValidDate" style="width:100%; padding:6px;" placeholder="e.g. Valid 4/12/2026">
+            </div>
+            <div class="input-group" style="margin-bottom:14px;">
+                <label>Fine Print (optional)</label>
+                <textarea id="promoFinePrint" style="width:100%; padding:6px; height:80px;" placeholder="Limit one coupon per customer. Excludes..."></textarea>
+            </div>
+            <div style="display:flex; gap:10px;">
+                <button class="primary" onclick="savePromo()" style="flex:1;">Activate</button>
+                <button class="danger" onclick="document.getElementById('promoModal').style.display='none'" style="flex:1;">Cancel</button>
+            </div>
+        </div>
     </div>
 
     <!-- CREATE ROLLTAINER MODAL -->
@@ -561,6 +737,9 @@
             if(module === 'online-orders') loadOnlineOrders();
             if(module === 'truck-receiving') loadManifests();
             if(module === 'rolltainers') loadRolltainers();
+            if(module === 'schedule') loadSchedule();
+            if(module === 'promotions') loadPromotions();
+            if(module === 'tasks') loadTasks('OPEN');
         }
 
         function switchTab(tabId, tabEl) {
@@ -582,6 +761,8 @@
             if(document.getElementById('module-employees').style.display !== 'none') loadEmployees();
             if(document.getElementById('module-audit-logs').style.display !== 'none') loadLogs();
             if(document.getElementById('module-online-orders').style.display !== 'none') loadOnlineOrders();
+            if(document.getElementById('module-schedule').style.display !== 'none') loadSchedule();
+            if(document.getElementById('module-promotions').style.display !== 'none') loadPromotions();
         }
 
         // --- ONLINE ORDERS ---
@@ -892,6 +1073,7 @@
 
         // --- PLANOGRAMS ---
         let currentPogId = null;
+        let currentPogMeta = null;
 
         async function loadPogs() {
             const pogs = await apiFetch('/api/pogs');
@@ -933,6 +1115,7 @@
         }
         function editPog(id, pog_id, name, dims, suffix) {
             currentPogId = id;
+            currentPogMeta = { pog_id, name, dims, suffix };
             document.getElementById('pogEditorHeader').innerText = `Planogram # ${pog_id} - ${name} - ${dims} - ${suffix}`;
             document.getElementById('pog-list-view').style.display = 'none';
             document.getElementById('pog-editor-view').style.display = 'block';
@@ -942,6 +1125,23 @@
             document.getElementById('pog-editor-view').style.display = 'none';
             document.getElementById('pog-list-view').style.display = 'block';
             currentPogId = null;
+            currentPogMeta = null;
+        }
+
+        async function printSectionBarcode() {
+            if (!currentPogMeta) return;
+            const section = document.getElementById('pogSectionSelect').value;
+            const res = await apiFetch('/api/print_section_barcode', {
+                method: 'POST',
+                body: JSON.stringify({
+                    pog_id: currentPogMeta.pog_id,
+                    name: currentPogMeta.name,
+                    dims: currentPogMeta.dims,
+                    suffix: currentPogMeta.suffix,
+                    section
+                })
+            });
+            if (!res || !res.success) alert('Print failed: ' + (res?.message || 'Unknown error'));
         }
         async function loadPogItems() {
             if(!currentPogId) return;
@@ -968,28 +1168,39 @@
 
         let masterInventoryCache = [];
         async function openPogAddItemModal() {
-            masterInventoryCache = await apiFetch('/api/inventory/master');
-            renderPogMasterList(masterInventoryCache);
             document.getElementById('addPogItemModal').style.display = 'flex';
             document.getElementById('pogItemSearch').value = '';
             document.getElementById('pogItemSearch').focus();
+
+            const tb = document.querySelector('#pogMasterSelectTable tbody');
+            if (masterInventoryCache.length === 0) {
+                tb.innerHTML = '<tr><td colspan="3" style="text-align:center;padding:20px;color:#64748b;">Loading...</td></tr>';
+                masterInventoryCache = await apiFetch('/api/inventory/master');
+            }
+            tb.innerHTML = '<tr><td colspan="3" style="text-align:center;padding:12px;color:#94a3b8;font-style:italic;">Type to search</td></tr>';
         }
 
         function renderPogMasterList(items) {
             const tb = document.querySelector('#pogMasterSelectTable tbody');
-            tb.innerHTML = '';
-            items.forEach(i => {
-                tb.innerHTML += `<tr>
-                    <td>${i.sku}</td><td>${i.name}</td>
-                    <td><button class="primary" onclick="addMasterItemToPog('${i.sku}')">Add</button></td>
-                </tr>`;
-            });
+            if (items.length === 0) {
+                tb.innerHTML = '<tr><td colspan="3" style="text-align:center;padding:12px;color:#94a3b8;">No results</td></tr>';
+                return;
+            }
+            tb.innerHTML = items.slice(0, 100).map(i => `<tr>
+                <td>${i.sku}</td><td>${i.name}</td>
+                <td><button class="primary" onclick="addMasterItemToPog('${i.sku}')">Add</button></td>
+            </tr>`).join('');
         }
 
         function filterPogMasterItems() {
             const search = document.getElementById('pogItemSearch').value.toLowerCase();
-            const filtered = masterInventoryCache.filter(i => 
-                (i.sku && i.sku.toLowerCase().includes(search)) || 
+            if (!search) {
+                document.querySelector('#pogMasterSelectTable tbody').innerHTML =
+                    '<tr><td colspan="3" style="text-align:center;padding:12px;color:#94a3b8;font-style:italic;">Type to search</td></tr>';
+                return;
+            }
+            const filtered = masterInventoryCache.filter(i =>
+                (i.sku && i.sku.toLowerCase().includes(search)) ||
                 (i.name && i.name.toLowerCase().includes(search)) ||
                 (i.upc && i.upc.toLowerCase().includes(search))
             );
@@ -1533,7 +1744,413 @@
             }
         }
 
+        // ===== SCHEDULE MODULE =====
+
+        let scheduleCurrentDate = new Date();
+        scheduleCurrentDate.setHours(0,0,0,0);
+
+        function scheduleNav(direction) {
+            scheduleCurrentDate.setDate(scheduleCurrentDate.getDate() + direction * 7);
+            loadSchedule();
+        }
+
+        async function loadSchedule() {
+            const _sd = scheduleCurrentDate;
+            const dateStr = `${_sd.getFullYear()}-${String(_sd.getMonth()+1).padStart(2,'0')}-${String(_sd.getDate()).padStart(2,'0')}`;
+            const grid = document.getElementById('scheduleGrid');
+            grid.innerHTML = '<div style="grid-column:1/-1; padding:20px; color:#64748b;">Loading schedule...</div>';
+            const data = await apiFetch(`/api/schedule/week?date=${dateStr}`);
+            if (!data || !data.shifts) {
+                grid.innerHTML = `<div style="grid-column:1/-1; padding:20px; color:#ef4444;">
+                    Failed to load schedule: ${data && data.message ? data.message : 'Server error or store not found.'}
+                    <br><small>Make sure store #${currentStoreId} is registered and the server is reachable.</small>
+                </div>`;
+                return;
+            }
+
+            document.getElementById('scheduleWeekLabel').textContent =
+                `Week of ${data.weekStart} – ${data.weekEnd}`;
+
+            const days = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
+            // Build the 7 date strings directly from the server-supplied weekStart string
+            // to avoid any local-timezone offset shifting the date.
+            const [wy, wm, wd] = data.weekStart.split('-').map(Number);
+            const dayDates = [];
+            for (let i = 0; i < 7; i++) {
+                const d = new Date(wy, wm - 1, wd + i);
+                dayDates.push(`${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`);
+            }
+
+            // Group scheduled shifts by date
+            const shiftsByDate = {};
+            dayDates.forEach(d => shiftsByDate[d] = []);
+            data.shifts.forEach(s => { if (shiftsByDate[s.shift_date] !== undefined) shiftsByDate[s.shift_date].push(s); });
+
+            const punches = data.punches || {};
+
+            grid.innerHTML = '';
+            const _t = new Date();
+            const today = `${_t.getFullYear()}-${String(_t.getMonth()+1).padStart(2,'0')}-${String(_t.getDate()).padStart(2,'0')}`;
+
+            dayDates.forEach((dateKey, idx) => {
+                const col = document.createElement('div');
+                col.style.cssText = 'background:#f8fafc; border:1px solid #e2e8f0; border-radius:8px; padding:10px; min-height:200px;';
+
+                const hdr = document.createElement('div');
+                hdr.style.cssText = `font-weight:bold; font-size:13px; margin-bottom:8px; padding-bottom:6px; border-bottom:2px solid ${dateKey === today ? '#3b82f6' : '#e2e8f0'}; color:${dateKey === today ? '#3b82f6' : '#1e293b'};`;
+                hdr.textContent = `${days[idx]} ${dateKey.slice(5)}`;
+                col.appendChild(hdr);
+
+                // Track which eids have a scheduled shift so we can spot unscheduled workers
+                const scheduledEids = new Set(shiftsByDate[dateKey].map(s => s.eid));
+
+                // Render each scheduled shift — with actual punch data overlaid if it exists
+                shiftsByDate[dateKey].forEach(s => {
+                    const punchData = punches[`${s.eid}_${dateKey}`] || null;
+                    col.appendChild(buildShiftCard(s, punchData));
+                });
+
+                // Render workers who clocked in but had no scheduled shift ("unscheduled")
+                Object.values(punches).forEach(p => {
+                    if (p.date === dateKey && !scheduledEids.has(p.eid)) {
+                        col.appendChild(buildUnscheduledCard(p));
+                    }
+                });
+
+                const addBtn = document.createElement('button');
+                addBtn.textContent = '+ Shift';
+                addBtn.style.cssText = 'width:100%; padding:4px; font-size:11px; margin-top:4px; cursor:pointer; background:#e2e8f0; border:none; border-radius:4px;';
+                addBtn.onclick = () => {
+                    document.getElementById('shiftDate').value = dateKey;
+                    openShiftModal(null);
+                };
+                col.appendChild(addBtn);
+                grid.appendChild(col);
+            });
+
+            // Populate employee filter for time punches log (bottom section)
+            const empSelect = document.getElementById('punchEidFilter');
+            if (empSelect.options.length <= 1) {
+                const emps = await apiFetch('/api/employees/local');
+                if (Array.isArray(emps)) emps.forEach(e => {
+                    const opt = document.createElement('option');
+                    opt.value = e.eid; opt.textContent = `${e.name} (${e.eid})`;
+                    empSelect.appendChild(opt);
+                });
+            }
+            if (!document.getElementById('punchDateFilter').value) {
+                document.getElementById('punchDateFilter').value = today;
+            }
+            loadTimePunches();
+        }
+
+        // Scheduled shift card — shows assigned time + actual punch data below it
+        function buildShiftCard(s, punchData) {
+            const card = document.createElement('div');
+            card.style.cssText = 'background:#fff; border:1px solid #cbd5e1; border-radius:6px; padding:6px 8px; margin-bottom:6px; font-size:12px;';
+
+            const startTime = s.start_time.slice(0, 5);
+            const endTime   = s.end_time.slice(0, 5);
+
+            let punchHtml = '';
+            if (punchData) {
+                const act = punchData.actions;
+                const clockIn  = act.find(a => a.action === 'CLOCK_IN');
+                const breakOut = act.find(a => a.action === 'BREAK_OUT');
+                const breakIn  = act.find(a => a.action === 'BREAK_IN');
+                const clockOut = act.find(a => a.action === 'CLOCK_OUT');
+
+                punchHtml = `<div style="margin-top:5px; padding-top:5px; border-top:1px dashed #e2e8f0; color:#475569; font-size:11px;">`;
+                if (clockIn)  punchHtml += `<div>🟢 Clocked In: <b>${clockIn.time}</b></div>`;
+                if (breakOut && breakIn)  punchHtml += `<div>☕ Lunch: ${breakOut.time} – ${breakIn.time}</div>`;
+                else if (breakOut)        punchHtml += `<div>☕ Break out: ${breakOut.time}</div>`;
+                if (clockOut) punchHtml += `<div>🔴 Clocked Out: <b>${clockOut.time}</b></div>`;
+                if (!clockIn) punchHtml += `<div style="color:#94a3b8; font-style:italic;">No clock-in yet</div>`;
+                punchHtml += `</div>`;
+            } else {
+                punchHtml = `<div style="margin-top:5px; color:#94a3b8; font-size:11px; font-style:italic;">Not clocked in</div>`;
+            }
+
+            card.innerHTML = `
+                <div style="font-weight:bold; color:#1e293b;">${s.employee_name || s.eid}</div>
+                <div style="color:#3b82f6; font-size:11px; font-weight:bold;">Assigned ${startTime} – ${endTime}</div>
+                <div style="color:#7c3aed; font-size:11px;">${s.position}${s.notes ? ' · ' + s.notes : ''}</div>
+                ${punchHtml}
+                <div style="margin-top:5px;">
+                    <span class="action-link" onclick='openShiftModal(${JSON.stringify(s).replace(/'/g, "&#39;")})'>Edit</span>
+                    <span class="action-link delete" onclick="deleteShift(${s.id})">Delete</span>
+                </div>`;
+            return card;
+        }
+
+        // Card for workers who clocked in but have no scheduled shift
+        function buildUnscheduledCard(p) {
+            const card = document.createElement('div');
+            card.style.cssText = 'background:#fff8f0; border:1px solid #fed7aa; border-radius:6px; padding:6px 8px; margin-bottom:6px; font-size:12px;';
+
+            const clockIn  = p.actions.find(a => a.action === 'CLOCK_IN');
+            const breakOut = p.actions.find(a => a.action === 'BREAK_OUT');
+            const breakIn  = p.actions.find(a => a.action === 'BREAK_IN');
+            const clockOut = p.actions.find(a => a.action === 'CLOCK_OUT');
+
+            let html = `
+                <div style="font-weight:bold; color:#1e293b;">${p.name || p.eid}</div>
+                <div style="color:#f59e0b; font-size:11px; font-weight:bold;">⚠ Unscheduled</div>
+                <div style="color:#475569; font-size:11px; margin-top:4px;">`;
+            if (clockIn)  html += `<div>🟢 Clocked In: <b>${clockIn.time}</b></div>`;
+            if (breakOut && breakIn) html += `<div>☕ Lunch: ${breakOut.time} – ${breakIn.time}</div>`;
+            else if (breakOut)       html += `<div>☕ Break out: ${breakOut.time}</div>`;
+            if (clockOut) html += `<div>🔴 Clocked Out: <b>${clockOut.time}</b></div>`;
+            html += `</div>
+                <div style="margin-top:5px;">
+                    <span class="action-link delete" onclick="deletePunches('${p.eid}', '${p.date}')">Delete</span>
+                </div>`;
+
+            card.innerHTML = html;
+            return card;
+        }
+
+        async function deletePunches(eid, date) {
+            if (!confirm(`Delete all punch records for ${eid} on ${date}?`)) return;
+            const res = await apiFetch(`/api/timepunches/${eid}/${date}`, { method: 'DELETE' });
+            if (res && res.success) loadSchedule();
+        }
+
+        async function openShiftModal(shiftData) {
+            // Populate employee dropdown
+            const sel = document.getElementById('shiftEid');
+            if (sel.options.length === 0) {
+                const emps = await apiFetch('/api/employees/local');
+                if (Array.isArray(emps)) emps.forEach(e => {
+                    const opt = document.createElement('option');
+                    opt.value = e.eid; opt.textContent = `${e.name} (${e.eid})`;
+                    sel.appendChild(opt);
+                });
+            }
+
+            if (shiftData) {
+                document.getElementById('shiftModalTitle').textContent = 'Edit Shift';
+                document.getElementById('shiftEditId').value = shiftData.id;
+                sel.value = shiftData.eid;
+                document.getElementById('shiftDate').value = shiftData.shift_date;
+                document.getElementById('shiftStart').value = shiftData.start_time.slice(0,5);
+                document.getElementById('shiftEnd').value = shiftData.end_time.slice(0,5);
+                document.getElementById('shiftPosition').value = shiftData.position;
+                document.getElementById('shiftNotes').value = shiftData.notes || '';
+            } else {
+                document.getElementById('shiftModalTitle').textContent = 'Add Shift';
+                document.getElementById('shiftEditId').value = '';
+                // Only set date if column button didn't already set it
+                if (!document.getElementById('shiftDate').value) {
+                    const _n = new Date();
+                    document.getElementById('shiftDate').value = `${_n.getFullYear()}-${String(_n.getMonth()+1).padStart(2,'0')}-${String(_n.getDate()).padStart(2,'0')}`;
+                }
+                document.getElementById('shiftStart').value = '09:00';
+                document.getElementById('shiftEnd').value = '17:00';
+                document.getElementById('shiftPosition').value = 'SA';
+                document.getElementById('shiftNotes').value = '';
+            }
+            document.getElementById('shiftModal').style.display = 'flex';
+        }
+
+        async function saveShift() {
+            const editId = document.getElementById('shiftEditId').value;
+            const payload = {
+                eid: document.getElementById('shiftEid').value,
+                shift_date: document.getElementById('shiftDate').value,
+                start_time: document.getElementById('shiftStart').value,
+                end_time: document.getElementById('shiftEnd').value,
+                position: document.getElementById('shiftPosition').value,
+                notes: document.getElementById('shiftNotes').value
+            };
+            if (!payload.eid || !payload.shift_date || !payload.start_time || !payload.end_time) {
+                return alert('Please fill in all required fields.');
+            }
+            const url = editId ? `/api/schedule/shift/${editId}` : '/api/schedule/shift';
+            const method = editId ? 'PUT' : 'POST';
+            const res = await apiFetch(url, { method, body: JSON.stringify(payload) });
+            if (res && res.success) {
+                document.getElementById('shiftModal').style.display = 'none';
+                loadSchedule();
+            } else {
+                alert('Error: ' + (res ? res.message : 'Unknown error'));
+            }
+        }
+
+        async function deleteShift(id) {
+            if (!confirm('Delete this shift?')) return;
+            const res = await apiFetch(`/api/schedule/shift/${id}`, { method: 'DELETE' });
+            if (res && res.success) loadSchedule();
+        }
+
+        async function loadTimePunches() {
+            const date = document.getElementById('punchDateFilter').value;
+            const eid  = document.getElementById('punchEidFilter').value;
+            let url = '/api/timepunches?';
+            if (date) url += `date=${date}&`;
+            if (eid)  url += `eid=${eid}`;
+            const rows = await apiFetch(url);
+            const tbody = document.querySelector('#punchesTable tbody');
+            if (!rows || !Array.isArray(rows)) { tbody.innerHTML = '<tr><td colspan="4">No data</td></tr>'; return; }
+            tbody.innerHTML = rows.map(r => `
+                <tr>
+                    <td>${r.employee_name || r.eid}</td>
+                    <td>${r.eid}</td>
+                    <td><span style="background:${actionColor(r.action)}; color:#fff; padding:2px 8px; border-radius:4px; font-size:12px;">${r.action}</span></td>
+                    <td>${new Date(r.timestamp).toLocaleString()}</td>
+                </tr>`).join('') || '<tr><td colspan="4">No punches found.</td></tr>';
+        }
+
+        function actionColor(action) {
+            return { CLOCK_IN:'#10b981', CLOCK_OUT:'#ef4444', BREAK_IN:'#f59e0b', BREAK_OUT:'#3b82f6' }[action] || '#64748b';
+        }
+
+        // ===== PROMOTIONS MODULE =====
+
+        async function loadPromotions() {
+            const promos = await apiFetch('/api/promotions');
+            if (!promos) return;
+
+            // Update summary cards
+            const weekly   = promos.find(p => p.type === 'WEEKLY'   && p.active);
+            const saturday = promos.find(p => p.type === 'SATURDAY' && p.active);
+            document.getElementById('weeklyPromoDisplay').innerHTML   = promoSummaryHtml(weekly);
+            document.getElementById('saturdayPromoDisplay').innerHTML = promoSummaryHtml(saturday);
+
+            // Full history table
+            const tbody = document.querySelector('#promotionsTable tbody');
+            tbody.innerHTML = promos.map(p => `
+                <tr style="opacity:${p.active ? 1 : 0.5}">
+                    <td><span style="background:${p.type==='WEEKLY'?'#3b82f6':'#f59e0b'}; color:#fff; padding:2px 8px; border-radius:4px; font-size:12px;">${p.type}</span></td>
+                    <td>${p.title}</td>
+                    <td>$${Number(p.discount).toFixed(2)} OFF $${Number(p.minimum).toFixed(2)}</td>
+                    <td>${p.valid_date || '—'}</td>
+                    <td>${p.active ? '<strong style="color:#10b981;">ACTIVE</strong>' : '<span style="color:#94a3b8;">inactive</span>'}</td>
+                    <td>
+                        ${!p.active ? `<span class="action-link" onclick="togglePromo(${p.id}, true)">Reactivate</span>` : `<span class="action-link" onclick="togglePromo(${p.id}, false)">Deactivate</span>`}
+                        <span class="action-link delete" onclick="deletePromo(${p.id})">Delete</span>
+                    </td>
+                </tr>`).join('') || '<tr><td colspan="6">No promotions yet.</td></tr>';
+        }
+
+        function promoSummaryHtml(promo) {
+            if (!promo) return '<p style="color:#94a3b8; font-style:italic;">No active promotion.</p>';
+            return `
+                <p style="font-size:22px; font-weight:bold; margin:4px 0;">$${Number(promo.discount).toFixed(0)} OFF $${Number(promo.minimum).toFixed(0)}</p>
+                <p style="color:#64748b; margin:2px 0;">${promo.title}</p>
+                ${promo.valid_date ? `<p style="color:#64748b; font-size:12px; margin:2px 0;">${promo.valid_date}</p>` : ''}`;
+        }
+
+        function openPromoModal(type) {
+            document.getElementById('promoType').value = type;
+            document.getElementById('promoModalTitle').textContent = type === 'WEEKLY' ? 'New Weekly Deal' : 'New Saturday Special';
+            document.getElementById('promoTitle').value = '';
+            document.getElementById('promoDiscount').value = '';
+            document.getElementById('promoMinimum').value = '';
+            document.getElementById('promoValidDate').value = '';
+            document.getElementById('promoFinePrint').value = '';
+            document.getElementById('promoModal').style.display = 'flex';
+        }
+
+        async function savePromo() {
+            const payload = {
+                type:       document.getElementById('promoType').value,
+                title:      document.getElementById('promoTitle').value.trim(),
+                discount:   parseFloat(document.getElementById('promoDiscount').value),
+                minimum:    parseFloat(document.getElementById('promoMinimum').value),
+                valid_date: document.getElementById('promoValidDate').value.trim(),
+                fine_print: document.getElementById('promoFinePrint').value.trim()
+            };
+            if (!payload.title || isNaN(payload.discount) || isNaN(payload.minimum)) {
+                return alert('Title, Discount, and Minimum are required.');
+            }
+            const res = await apiFetch('/api/promotions', { method: 'POST', body: JSON.stringify(payload) });
+            if (res && res.success) {
+                document.getElementById('promoModal').style.display = 'none';
+                loadPromotions();
+            } else {
+                alert('Error: ' + (res ? res.message : 'Unknown'));
+            }
+        }
+
+        async function togglePromo(id, active) {
+            await apiFetch(`/api/promotions/${id}`, { method: 'PUT', body: JSON.stringify({ active }) });
+            loadPromotions();
+        }
+
+        async function deletePromo(id) {
+            if (!confirm('Delete this promotion?')) return;
+            await apiFetch(`/api/promotions/${id}`, { method: 'DELETE' });
+            loadPromotions();
+        }
+
         window.onload = loadStores;
+
+        // --- TASKS ---
+        let tasksCurrentFilter = 'OPEN';
+        async function loadTasks(filter) {
+            tasksCurrentFilter = filter || tasksCurrentFilter;
+            document.getElementById('tasksFilterOpen').className = tasksCurrentFilter === 'OPEN' ? 'primary' : '';
+            document.getElementById('tasksFilterDone').className = tasksCurrentFilter === 'DONE' ? 'primary' : '';
+            const rows = await apiFetch('/api/tasks');
+            if (!Array.isArray(rows)) return;
+            const filtered = rows.filter(t => t.status === tasksCurrentFilter);
+            const priorityColor = { HIGH: '#ef4444', NORMAL: '#f59e0b', LOW: '#94a3b8' };
+            const tb = document.querySelector('#tasksTable tbody');
+            tb.innerHTML = filtered.length === 0
+                ? `<tr><td colspan="5" style="text-align:center;color:#94a3b8;padding:20px;">No ${tasksCurrentFilter.toLowerCase()} tasks.</td></tr>`
+                : filtered.map(t => `<tr>
+                    <td><span style="background:${priorityColor[t.priority]};color:#fff;padding:2px 8px;border-radius:4px;font-size:12px;">${t.priority}</span></td>
+                    <td><strong>${t.title}</strong>${t.description ? `<br><small style="color:#64748b;">${t.description}</small>` : ''}</td>
+                    <td>${t.assigned_name || '<span style="color:#94a3b8;">Unassigned</span>'}</td>
+                    <td>${t.due_date ? t.due_date.slice(0,10) : '<span style="color:#94a3b8;">—</span>'}</td>
+                    <td>
+                        ${t.status === 'OPEN'
+                            ? `<span class="action-link" onclick="setTaskStatus(${t.id},'DONE')">Mark Done</span>`
+                            : `<span class="action-link" onclick="setTaskStatus(${t.id},'OPEN')">Reopen</span>`}
+                        <span class="action-link delete" onclick="deleteTask(${t.id})">Delete</span>
+                    </td>
+                </tr>`).join('');
+        }
+
+        async function setTaskStatus(id, status) {
+            await apiFetch(`/api/tasks/${id}`, { method: 'PUT', body: JSON.stringify({ status }) });
+            loadTasks();
+        }
+
+        async function deleteTask(id) {
+            if (!confirm('Delete this task?')) return;
+            await apiFetch(`/api/tasks/${id}`, { method: 'DELETE' });
+            loadTasks();
+        }
+
+        async function openTaskModal() {
+            document.getElementById('taskTitle').value = '';
+            document.getElementById('taskDescription').value = '';
+            document.getElementById('taskDueDate').value = '';
+            document.getElementById('taskPriority').value = 'NORMAL';
+            const sel = document.getElementById('taskAssignedEid');
+            sel.innerHTML = '<option value="">Unassigned</option>';
+            const emps = await apiFetch('/api/employees/local');
+            if (Array.isArray(emps)) emps.forEach(e => sel.innerHTML += `<option value="${e.eid}">${e.name}</option>`);
+            document.getElementById('taskModal').style.display = 'flex';
+            document.getElementById('taskTitle').focus();
+        }
+
+        async function submitTask() {
+            const title = document.getElementById('taskTitle').value.trim();
+            if (!title) return alert('Title is required.');
+            const body = {
+                title,
+                description: document.getElementById('taskDescription').value.trim() || null,
+                assigned_eid: document.getElementById('taskAssignedEid').value || null,
+                due_date: document.getElementById('taskDueDate').value || null,
+                priority: document.getElementById('taskPriority').value
+            };
+            await apiFetch('/api/tasks', { method: 'POST', body: JSON.stringify(body) });
+            document.getElementById('taskModal').style.display = 'none';
+            loadTasks('OPEN');
+        }
     </script>
 </body>
 </html>

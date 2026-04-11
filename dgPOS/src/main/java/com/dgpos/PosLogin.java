@@ -54,7 +54,7 @@ public class PosLogin extends Application {
         Label statusLabel = new Label("Online");
         statusLabel.getStyleClass().add("status-text");
         
-        Label locationLabel = new Label("Store #0420 - Ascendville, TX");
+        Label locationLabel = new Label("Store #14302 - Superior, WI");
         locationLabel.getStyleClass().add("status-text");
         
         Label tillLabel = new Label("Till Id: 1");
@@ -359,7 +359,15 @@ public class PosLogin extends Application {
     }
     
     private void finishClockAction(String action) {
-        System.out.println("Clock action completed: " + action);
+        System.out.println("Clock action completed: " + action + " for EID: " + currentEid);
+        String dbAction = switch (action) {
+            case "Clocked In"          -> "CLOCK_IN";
+            case "Clocked Out"         -> "CLOCK_OUT";
+            case "Break In Recorded"   -> "BREAK_IN";
+            case "Break Out Recorded"  -> "BREAK_OUT";
+            default -> "CLOCK_IN";
+        };
+        DatabaseManager.logTimePunch(currentEid, dbAction);
         displayTemporaryMessage(action.toUpperCase() + " SUCCESSFUL!", State.LOGIN_EID);
     }
 

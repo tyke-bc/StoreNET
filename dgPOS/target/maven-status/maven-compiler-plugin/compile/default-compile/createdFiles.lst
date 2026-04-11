@@ -4,6 +4,8 @@ com\dgpos\DatabaseManager$UserData.class
 com\dgpos\DatabaseManager$ReceiptData.class
 com\dgpos\PosLogin.class
 com\dgpos\MainTransactionScreen$ScannedItem.class
+com\dgpos\DatabaseManager$LabelData.class
+com\dgpos\DatabaseManager$PromotionData.class
 com\dgpos\MainTransactionScreen$1.class
 com\dgpos\DatabaseManager.class
 com\dgpos\PosLogin$State.class

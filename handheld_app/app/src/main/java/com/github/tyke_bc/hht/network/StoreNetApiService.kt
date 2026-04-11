@@ -5,6 +5,7 @@ import retrofit2.http.Body
 import retrofit2.http.GET
 import retrofit2.http.Header
 import retrofit2.http.POST
+import retrofit2.http.PUT
 import retrofit2.http.Path
 
 // DTOs
@@ -235,7 +236,90 @@ interface StoreNetApiService {
         @Header("X-Store-ID") storeId: String,
         @Body request: UpdatePackSizeRequest
     ): GenericResponse
+
+    @GET("api/cyclecount/section/{pogId}/{section}")
+    suspend fun getCycleCountSection(
+        @Header("X-Store-ID") storeId: String,
+        @Path("pogId") pogId: String,
+        @Path("section") section: String
+    ): CycleCountSectionResponse
+
+    @POST("api/cyclecount/submit")
+    suspend fun submitCycleCount(
+        @Header("X-Store-ID") storeId: String,
+        @Body request: CycleCountSubmitRequest
+    ): GenericResponse
+
+    @GET("api/inventory/event_check/{sku}")
+    suspend fun checkPricingEvents(
+        @Header("X-Store-ID") storeId: String,
+        @Path("sku") sku: String
+    ): EventCheckResponse
+
+    @GET("api/tasks")
+    suspend fun getTasks(@Header("X-Store-ID") storeId: String): List<Task>
+
+    @PUT("api/tasks/{id}")
+    suspend fun updateTask(
+        @Header("X-Store-ID") storeId: String,
+        @Path("id") id: Int,
+        @Body request: UpdateTaskRequest
+    ): GenericResponse
 }
+
+data class PricingEvent(
+    val id: Int,
+    val name: String,
+    val type: String,
+    val price: Double
+)
+
+data class EventCheckResponse(
+    val success: Boolean,
+    val events: List<PricingEvent>?,
+    val message: String? = null
+)
+
+data class Task(
+    val id: Int,
+    val title: String,
+    val description: String?,
+    @SerializedName("assigned_eid") val assignedEid: String?,
+    @SerializedName("assigned_name") val assignedName: String?,
+    @SerializedName("due_date") val dueDate: String?,
+    val priority: String,
+    val status: String
+)
+
+data class UpdateTaskRequest(val status: String)
+
+data class CycleCountItem(
+    val sku: String,
+    val name: String,
+    val upc: String?,
+    val section: String,
+    val shelf: String,
+    val faces: String?,
+    val quantity: Int
+)
+
+data class CycleCountSectionResponse(
+    val success: Boolean,
+    @SerializedName("pog_id") val pogId: String?,
+    @SerializedName("pog_name") val pogName: String?,
+    val section: String?,
+    val items: List<CycleCountItem>?,
+    val message: String? = null
+)
+
+data class CycleCountEntry(
+    val sku: String,
+    @SerializedName("counted_qty") val countedQty: Int
+)
+
+data class CycleCountSubmitRequest(
+    val counts: List<CycleCountEntry>
+)
 
 data class Rolltainer(
     val id: Int,

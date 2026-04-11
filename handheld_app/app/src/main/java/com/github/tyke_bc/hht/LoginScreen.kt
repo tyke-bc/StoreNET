@@ -17,14 +17,21 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
+import androidx.compose.runtime.rememberCoroutineScope
+import com.github.tyke_bc.hht.network.AuthRequest
+import com.github.tyke_bc.hht.network.RetrofitClient
 import com.github.tyke_bc.hht.ui.theme.*
+import kotlinx.coroutines.launch
 
 @Composable
 fun LoginScreen(onLoginSuccess: (String) -> Unit) {
     var username by remember { mutableStateOf("") }
     var password by remember { mutableStateOf("") }
     var isPesLogin by remember { mutableStateOf(false) }
-    
+    var isLoading by remember { mutableStateOf(false) }
+    var errorMessage by remember { mutableStateOf<String?>(null) }
+    val coroutineScope = rememberCoroutineScope()
+
     var storeNumber by remember { mutableStateOf("14302") }
     var showStoreDialog by remember { mutableStateOf(false) }
     var inputStoreNumber by remember { mutableStateOf(storeNumber) }
@@ -150,14 +157,51 @@ fun LoginScreen(onLoginSuccess: (String) -> Unit) {
 
                         Spacer(modifier = Modifier.height(8.dp))
 
+                        if (errorMessage != null) {
+                            Text(
+                                text = errorMessage!!,
+                                color = Color.Red,
+                                fontSize = 13.sp,
+                                fontWeight = FontWeight.Bold,
+                                modifier = Modifier.padding(bottom = 4.dp)
+                            )
+                        }
+
                         Button(
-                            onClick = { onLoginSuccess(storeNumber) },
+                            onClick = {
+                                errorMessage = null
+                                if (username.isBlank() || password.isBlank()) {
+                                    errorMessage = "Enter your EID and PIN."
+                                    return@Button
+                                }
+                                coroutineScope.launch {
+                                    isLoading = true
+                                    try {
+                                        val res = RetrofitClient.instance.authLocal(
+                                            storeNumber, AuthRequest(username.trim(), password.trim())
+                                        )
+                                        if (res.success && res.user != null) {
+                                            MainActivity.loggedInUser = res.user.name
+                                            MainActivity.loggedInRole = res.user.role
+                                            onLoginSuccess(storeNumber)
+                                        } else {
+                                            errorMessage = res.message ?: "Invalid EID or PIN."
+                                        }
+                                    } catch (e: Exception) {
+                                        errorMessage = "Connection error: ${e.message}"
+                                    } finally {
+                                        isLoading = false
+                                    }
+                                }
+                            },
+                            enabled = !isLoading,
                             modifier = Modifier.fillMaxWidth().height(48.dp),
                             shape = RoundedCornerShape(4.dp),
                             colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFE0E0E0)),
                             border = BorderStroke(1.dp, Color.Gray)
                         ) {
-                            Text("Login", color = Color.Black, fontSize = 18.sp)
+                            if (isLoading) CircularProgressIndicator(modifier = Modifier.size(20.dp), strokeWidth = 2.dp, color = Color.Black)
+                            else Text("Login", color = Color.Black, fontSize = 18.sp)
                         }
 
                         Spacer(modifier = Modifier.height(12.dp))

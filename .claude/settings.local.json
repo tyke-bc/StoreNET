@@ -1,0 +1,11 @@
+{
+  "permissions": {
+    "allow": [
+      "Read(//c/Users/User/**)",
+      "Read(//c/Users/User/.gemini/**)",
+      "Bash(python:*)",
+      "Bash(JAVA_HOME=\"/c/Program Files/Eclipse Adoptium/jdk-17.0.17.10-hotspot\" ./gradlew assembleDebug)",
+      "Bash(JAVA_HOME=\"/c/Program Files/Java/jdk-25\" ./gradlew assembleDebug)"
+    ]
+  }
+}

@@ -52,6 +52,7 @@ public class PrinterService {
 
             baos.write(LEFT);
             double subtotal = 0;
+            double taxableSubtotal = 0;
             for (MainTransactionScreen.ScannedItem item : items) {
                 String name = item.getName();
                 String upc = item.getUpc();
@@ -82,13 +83,14 @@ public class PrinterService {
                 }
                 
                 subtotal += price;
+                if (item.isTaxable()) taxableSubtotal += price;
             }
             baos.write("\n".getBytes());
 
             baos.write(RIGHT);
-            double tax = subtotal * 0.055;
+            double tax = taxableSubtotal * 0.055;
             double total = subtotal + tax;
-            baos.write(String.format("Tax:  $%.2f @ 5.5%%   $%.2f\n", subtotal, tax).getBytes());
+            baos.write(String.format("Tax (5.5%%)         $%.2f\n", tax).getBytes());
             baos.write(BOLD_ON);
             baos.write(String.format("Balance to pay       $%.2f\n", total).getBytes());
             baos.write(BOLD_OFF);
@@ -131,48 +133,240 @@ public class PrinterService {
         }
     }
 
+    public static void printLabel(DatabaseManager.LabelData data) {
+        new Thread(() -> {
+            try {
+                final int WIDTH = 384, HEIGHT = 240;
+                java.awt.image.BufferedImage img = new java.awt.image.BufferedImage(WIDTH, HEIGHT, java.awt.image.BufferedImage.TYPE_INT_RGB);
+                java.awt.Graphics2D g = img.createGraphics();
+
+                // White background
+                g.setColor(java.awt.Color.WHITE);
+                g.fillRect(0, 0, WIDTH, HEIGHT);
+                g.setColor(java.awt.Color.BLACK);
+
+                // --- LEFT COLUMN: item text ---
+                String fullText = (s(data.brand) + " " + data.name + " " + s(data.variant) + " " + s(data.size)).trim().replaceAll("\\s+", " ");
+                List<String> lines = wrapText(fullText, 13);
+                java.awt.Font itemFont = new java.awt.Font("Arial", java.awt.Font.PLAIN, 18);
+                g.setFont(itemFont);
+                java.awt.FontMetrics fm = g.getFontMetrics();
+                int yPos = 10 + fm.getAscent();
+                for (int i = 0; i < Math.min(lines.size(), 4); i++) {
+                    g.drawString(lines.get(i), 10, yPos);
+                    yPos += 28;
+                }
+
+                // Barcode (Code128 via ZXing)
+                try {
+                    com.google.zxing.oned.Code128Writer writer = new com.google.zxing.oned.Code128Writer();
+                    String cleanUpc = data.upc.replaceAll("[^0-9A-Za-z]", "");
+                    java.util.Map<com.google.zxing.EncodeHintType, Object> hints = new java.util.EnumMap<>(com.google.zxing.EncodeHintType.class);
+                    hints.put(com.google.zxing.EncodeHintType.MARGIN, 0);
+                    com.google.zxing.common.BitMatrix matrix = writer.encode(cleanUpc, com.google.zxing.BarcodeFormat.CODE_128, 170, 35, hints);
+                    java.awt.image.BufferedImage bcImg = com.google.zxing.client.j2se.MatrixToImageWriter.toBufferedImage(matrix);
+                    g.drawImage(bcImg, 5, 125, null);
+                } catch (Exception e2) {
+                    g.drawString("[BARCODE ERR]", 5, 145);
+                }
+
+                // Unit price (bottom left)
+                java.awt.Font tinyFont = new java.awt.Font("Arial", java.awt.Font.PLAIN, 12);
+                java.awt.Font tinyBoldFont = new java.awt.Font("Arial", java.awt.Font.BOLD, 12);
+                java.awt.Font unitPriceFont = new java.awt.Font("Arial", java.awt.Font.BOLD, 17);
+                g.setFont(tinyFont);
+                java.awt.FontMetrics fmTiny = g.getFontMetrics();
+                g.drawString("Unit", 10, 185 + fmTiny.getAscent());
+                g.drawString("Price", 10, 205 + fmTiny.getAscent());
+                g.setFont(unitPriceFont);
+                java.awt.FontMetrics fmUp = g.getFontMetrics();
+                g.drawString(String.format("$%.2f", data.price), 50, 180 + fmUp.getAscent());
+                g.setFont(tinyFont);
+                g.drawString(data.unitPriceUnit, 50, 210 + fmTiny.getAscent());
+
+                // --- RIGHT COLUMN: price box ---
+                final int BOX_X = 185, BOX_Y = 5, BOX_W = 190, BOX_H = 125;
+                g.setStroke(new java.awt.BasicStroke(3));
+                g.drawRect(BOX_X, BOX_Y, BOX_W, BOX_H);
+                g.setStroke(new java.awt.BasicStroke(1));
+
+                g.setFont(tinyFont);
+                g.drawString("Item Price", BOX_X + 40, BOX_Y + 5 + fmTiny.getAscent());
+
+                int dollars = (int) data.price;
+                int cents = (int) Math.round((data.price - dollars) * 100);
+
+                java.awt.Font centsFont = new java.awt.Font("Arial", java.awt.Font.BOLD, 28);
+                java.awt.Font dollarsFont = new java.awt.Font("Arial", java.awt.Font.BOLD, 68);
+
+                g.setFont(centsFont);
+                java.awt.FontMetrics fmCents = g.getFontMetrics();
+                g.drawString("$", BOX_X + 10, BOX_Y + 40 + fmCents.getAscent());
+
+                g.setFont(dollarsFont);
+                java.awt.FontMetrics fmDollars = g.getFontMetrics();
+                g.drawString(String.valueOf(dollars), BOX_X + 35, BOX_Y + 20 + fmDollars.getAscent());
+
+                g.setFont(centsFont);
+                g.drawString(String.format("%02d", cents), BOX_X + 130, BOX_Y + 25 + fmCents.getAscent());
+
+                if (data.taxable) {
+                    g.setFont(tinyBoldFont);
+                    java.awt.FontMetrics fmTb = g.getFontMetrics();
+                    g.drawString("T", BOX_X + 20, BOX_Y + 100 + fmTb.getAscent());
+                }
+
+                // Data stack below price box
+                int dataY = BOX_Y + BOX_H + 10;
+                g.setFont(tinyFont);
+                g.drawString(data.upc, BOX_X + 25, dataY + fmTiny.getAscent());
+                g.drawString(data.pogDate + "       E", BOX_X + 25, dataY + 22 + fmTiny.getAscent());
+
+                // Location/faces box
+                int locX = BOX_X + 110, locY = dataY - 2;
+                g.drawRect(locX, locY, 80, 50);
+                g.setFont(tinyBoldFont);
+                java.awt.FontMetrics fmTbold = g.getFontMetrics();
+                g.drawString(data.location, locX + 8, locY + 5 + fmTbold.getAscent());
+                g.drawString(data.faces, locX + 25, locY + 25 + fmTbold.getAscent());
+
+                g.dispose();
+
+                // Assemble ESC/POS payload and send
+                java.io.ByteArrayOutputStream baos = new java.io.ByteArrayOutputStream();
+                baos.write(INIT);
+                baos.write(LEFT);
+                baos.write(imageToEscPos(img));
+                baos.write(new byte[]{0x1d, 0x56, 0x41, 0x00}); // Partial cut
+
+                try (Socket socket = new Socket(PRINTER_IP, PRINTER_PORT);
+                     OutputStream out = socket.getOutputStream()) {
+                    out.write(baos.toByteArray());
+                    out.flush();
+                    System.out.println("Label sent: " + baos.size() + " bytes to printer at " + PRINTER_IP);
+                }
+            } catch (Exception e) {
+                e.printStackTrace();
+            }
+        }).start();
+    }
+
+    private static byte[] imageToEscPos(java.awt.image.BufferedImage src) throws Exception {
+        int w = src.getWidth(), h = src.getHeight();
+        int paddedW = (w % 8 == 0) ? w : w + (8 - w % 8);
+        int bytesWide = paddedW / 8;
+
+        java.io.ByteArrayOutputStream out = new java.io.ByteArrayOutputStream();
+        // GS v 0: raster bit image transfer
+        out.write(new byte[]{
+            0x1d, 0x76, 0x30, 0x00,
+            (byte)(bytesWide & 0xFF), (byte)((bytesWide >> 8) & 0xFF),
+            (byte)(h & 0xFF), (byte)((h >> 8) & 0xFF)
+        });
+
+        for (int y = 0; y < h; y++) {
+            for (int xByte = 0; xByte < bytesWide; xByte++) {
+                int b = 0;
+                for (int bit = 0; bit < 8; bit++) {
+                    int x = xByte * 8 + bit;
+                    if (x < w) {
+                        int rgb = src.getRGB(x, y);
+                        int r = (rgb >> 16) & 0xFF;
+                        int gv = (rgb >> 8) & 0xFF;
+                        int bv = rgb & 0xFF;
+                        if ((r + gv + bv) / 3 < 128) { // darker than mid-gray = black dot
+                            b |= (1 << (7 - bit));
+                        }
+                    }
+                }
+                out.write(b);
+            }
+        }
+        return out.toByteArray();
+    }
+
+    private static List<String> wrapText(String text, int maxChars) {
+        List<String> lines = new java.util.ArrayList<>();
+        String[] words = text.split(" ");
+        StringBuilder current = new StringBuilder();
+        for (String word : words) {
+            if (current.length() > 0 && current.length() + 1 + word.length() > maxChars) {
+                lines.add(current.toString());
+                current = new StringBuilder();
+            }
+            if (current.length() > 0) current.append(" ");
+            current.append(word);
+        }
+        if (current.length() > 0) lines.add(current.toString());
+        return lines;
+    }
+
+    private static String s(String val) { return val != null ? val : ""; }
+
     public static void printCoupon() {
+        // Fetch active promotions from DB (weekly deal + Saturday special)
+        DatabaseManager.PromotionData weekly   = DatabaseManager.getActivePromotion("WEEKLY");
+        DatabaseManager.PromotionData saturday = DatabaseManager.getActivePromotion("SATURDAY");
+
+        // Nothing to print if both are inactive
+        if (weekly == null && saturday == null) {
+            System.out.println("No active promotions — skipping coupon print.");
+            return;
+        }
+
         try {
             java.io.ByteArrayOutputStream baos = new java.io.ByteArrayOutputStream();
             baos.write(INIT);
             baos.write(CENTER);
             baos.write("------ CUT HERE ------\n\n".getBytes());
-            
-            baos.write(BOLD_ON);
-            baos.write("SATURDAY MAR. 28TH!\n".getBytes());
-            baos.write("Valid 3/28/2026\n".getBytes());
-            baos.write(DOUBLE_SIZE);
-            baos.write("$5 OFF $25\n".getBytes());
-            baos.write(NORMAL_SIZE);
-            baos.write("$5 off your purchase of\n".getBytes());
-            baos.write("$25 or more (pretax)\n".getBytes());
-            baos.write("OR SHOP ONLINE AT DOLLARGENERAL.COM\n".getBytes());
-            baos.write(BOLD_OFF);
 
-            baos.write(LEFT);
-            baos.write(new byte[]{0x1b, 0x33, 0x18}); // Set line spacing
-            baos.write("$25 or more (pretax) after all other DG\ndiscounts. Limit one DG $2, $3, or $5\noff store coupon per customer.\nExcludes: phone, gift and prepaid\nfinancial cards, prepaid wireless\nhandsets, Rug Doctor rental, milk,\npropane, tobacco and alcohol.\n".getBytes());
-            baos.write(new byte[]{0x1b, 0x32}); // Reset line spacing
+            // Saturday special (printed first if active)
+            if (saturday != null) {
+                baos.write(BOLD_ON);
+                baos.write((saturday.title + "\n").getBytes());
+                if (!saturday.validDate.isEmpty()) {
+                    baos.write(("Valid " + saturday.validDate + "\n").getBytes());
+                }
+                baos.write(DOUBLE_SIZE);
+                baos.write(String.format("$%.0f OFF $%.0f\n", saturday.discount, saturday.minimum).getBytes());
+                baos.write(NORMAL_SIZE);
+                baos.write(String.format("$%.0f off your purchase of $%.0f or more (pretax)\n",
+                        saturday.discount, saturday.minimum).getBytes());
+                baos.write(BOLD_OFF);
+                if (!saturday.finePrint.isEmpty()) {
+                    baos.write(LEFT);
+                    baos.write(new byte[]{0x1b, 0x33, 0x18});
+                    baos.write((saturday.finePrint + "\n").getBytes());
+                    baos.write(new byte[]{0x1b, 0x32});
+                    baos.write(CENTER);
+                }
+                baos.write("\n".getBytes());
+            }
 
-            // Barcode (Code 128 mixed Subset B and C) - Fits 58mm paper at Width 2
-            baos.write(CENTER);
-            baos.write(new byte[]{0x1d, 0x68, 0x60}); // Height 96
-            baos.write(new byte[]{0x1d, 0x77, 0x02}); // Width 2
-            baos.write(new byte[]{0x1d, 0x48, 0x00}); // HRI disabled
-            
-            byte[] couponBarcode = new byte[]{
-                123, 66, // {B (Start Subset B)
-                88,      // 'X'
-                123, 67, // {C (Switch to Subset C)
-                5, 41, 53, 22, 41, 40, 4, 31 // Numeric pairs for "0541532241400431"
-            };
-            
-            baos.write(new byte[]{0x1d, 0x6b, 0x49});
-            baos.write((byte) couponBarcode.length);
-            baos.write(couponBarcode);
-            
-            baos.write(("\n*X0541532241400431*\n\n").getBytes());
+            // Weekly deal (printed below)
+            if (weekly != null) {
+                baos.write(BOLD_ON);
+                baos.write((weekly.title + "\n").getBytes());
+                if (!weekly.validDate.isEmpty()) {
+                    baos.write(("Valid " + weekly.validDate + "\n").getBytes());
+                }
+                baos.write(DOUBLE_SIZE);
+                baos.write(String.format("$%.0f OFF $%.0f\n", weekly.discount, weekly.minimum).getBytes());
+                baos.write(NORMAL_SIZE);
+                baos.write(String.format("$%.0f off your purchase of $%.0f or more (pretax)\n",
+                        weekly.discount, weekly.minimum).getBytes());
+                baos.write("OR SHOP ONLINE AT DOLLARGENERAL.COM\n".getBytes());
+                baos.write(BOLD_OFF);
+                if (!weekly.finePrint.isEmpty()) {
+                    baos.write(LEFT);
+                    baos.write(new byte[]{0x1b, 0x33, 0x18});
+                    baos.write((weekly.finePrint + "\n").getBytes());
+                    baos.write(new byte[]{0x1b, 0x32});
+                    baos.write(CENTER);
+                }
+            }
 
+            baos.write("\n".getBytes());
             baos.write("NEXT TIME TRY\n".getBytes());
             baos.write(BOLD_ON);
             baos.write("SAME DAY DELIVERY\n".getBytes());

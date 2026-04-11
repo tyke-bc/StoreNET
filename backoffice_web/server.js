@@ -86,9 +86,65 @@ const storeContext = async (req, res, next) => {
                 'ALTER TABLE online_orders ADD COLUMN tax DECIMAL(10,2) DEFAULT 0.00',
                 'ALTER TABLE online_order_items ADD COLUMN price DECIMAL(10,2) DEFAULT 0.00',
                 'ALTER TABLE inventory ADD COLUMN quantity_backstock INT DEFAULT 0',
-                'ALTER TABLE inventory ADD COLUMN pack_size INT DEFAULT 1'
+                'ALTER TABLE inventory ADD COLUMN pack_size INT DEFAULT 1',
+                'ALTER TABLE shifts MODIFY COLUMN eid VARCHAR(50) CHARACTER SET utf8mb4 COLLATE utf8mb4_0900_ai_ci NOT NULL',
+                'ALTER TABLE time_punches ADD COLUMN eid VARCHAR(50) CHARACTER SET utf8mb4 COLLATE utf8mb4_0900_ai_ci NOT NULL DEFAULT \'\' AFTER id',
+                'ALTER TABLE time_punches MODIFY COLUMN eid VARCHAR(50) CHARACTER SET utf8mb4 COLLATE utf8mb4_0900_ai_ci NOT NULL',
+                "ALTER TABLE time_punches ADD COLUMN action ENUM('CLOCK_IN','CLOCK_OUT','BREAK_IN','BREAK_OUT') NOT NULL DEFAULT 'CLOCK_IN' AFTER eid",
+                'ALTER TABLE time_punches ADD COLUMN timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP AFTER action',
+                'ALTER TABLE tasks ADD COLUMN assigned_eid VARCHAR(50) CHARACTER SET utf8mb4 COLLATE utf8mb4_0900_ai_ci AFTER description',
+                'ALTER TABLE tasks MODIFY COLUMN assigned_eid VARCHAR(50) CHARACTER SET utf8mb4 COLLATE utf8mb4_0900_ai_ci',
+                "ALTER TABLE tasks ADD COLUMN priority ENUM('LOW','NORMAL','HIGH') DEFAULT 'NORMAL' AFTER due_date",
+                "ALTER TABLE tasks MODIFY COLUMN status ENUM('OPEN','DONE') DEFAULT 'OPEN'",
+                'ALTER TABLE tasks ADD COLUMN created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP'
             ];
             for (const sql of migs) { try { await pool.query(sql); } catch(e){} }
+
+            // Shifts (employee schedule)
+            await pool.query(`CREATE TABLE IF NOT EXISTS shifts (
+                id INT AUTO_INCREMENT PRIMARY KEY,
+                eid VARCHAR(50) CHARACTER SET utf8mb4 COLLATE utf8mb4_0900_ai_ci NOT NULL,
+                shift_date DATE NOT NULL,
+                start_time TIME NOT NULL,
+                end_time TIME NOT NULL,
+                position VARCHAR(50) DEFAULT 'SA',
+                notes VARCHAR(255),
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )`);
+
+            // Promotions / coupons (managed via web, printed by POS)
+            await pool.query(`CREATE TABLE IF NOT EXISTS promotions (
+                id INT AUTO_INCREMENT PRIMARY KEY,
+                type ENUM('WEEKLY','SATURDAY') NOT NULL,
+                title VARCHAR(100) NOT NULL,
+                discount DECIMAL(10,2) NOT NULL,
+                minimum DECIMAL(10,2) NOT NULL,
+                fine_print TEXT,
+                valid_date VARCHAR(50),
+                active BOOLEAN DEFAULT TRUE,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )`);
+
+            // Tasks (created via web, visible & completable on HHT)
+            await pool.query(`CREATE TABLE IF NOT EXISTS tasks (
+                id INT AUTO_INCREMENT PRIMARY KEY,
+                title VARCHAR(255) NOT NULL,
+                description TEXT,
+                assigned_eid VARCHAR(50) CHARACTER SET utf8mb4 COLLATE utf8mb4_0900_ai_ci,
+                due_date DATE,
+                priority ENUM('LOW','NORMAL','HIGH') DEFAULT 'NORMAL',
+                status ENUM('OPEN','DONE') DEFAULT 'OPEN',
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )`);
+
+            // Time punches (written by POS, visible via web)
+            await pool.query(`CREATE TABLE IF NOT EXISTS time_punches (
+                id INT AUTO_INCREMENT PRIMARY KEY,
+                eid VARCHAR(50) CHARACTER SET utf8mb4 COLLATE utf8mb4_0900_ai_ci NOT NULL,
+                action ENUM('CLOCK_IN','CLOCK_OUT','BREAK_IN','BREAK_OUT') NOT NULL,
+                timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )`);
+
         } catch (e) { console.error(`Table init failed for store ${storeId}:`, e.message); }
 
         next();
@@ -99,6 +155,14 @@ const storeContext = async (req, res, next) => {
 };
 
 app.use(storeContext);
+
+// --- AUTH MIDDLEWARE ---
+// Protects endpoints that create, update, or delete data.
+// GET (read-only) routes are left open for HHT scanner compatibility.
+const requireAuth = (req, res, next) => {
+    if (!req.session.userId) return res.status(401).json({ success: false, message: 'Login required.' });
+    next();
+};
 
 // --- GLOBAL ENTERPRISE APIS ---
 
@@ -159,8 +223,8 @@ app.post('/api/inventory/master/update', async (req, res) => {
 app.post('/api/inventory/master/delete', async (req, res) => {
     const { sku } = req.body;
     console.log(`[DCC] Deleting master SKU: ${sku}`);
+    const conn = await enterprisePool().getConnection();
     try {
-        const conn = await enterprisePool().getConnection();
         await conn.beginTransaction();
 
         // Remove references in Pricing Events first
@@ -170,13 +234,14 @@ app.post('/api/inventory/master/delete', async (req, res) => {
         const [result] = await conn.query('DELETE FROM master_inventory WHERE sku = ?', [sku]);
 
         await conn.commit();
-        conn.release();
-
         console.log(`[DCC] Delete result: affected rows ${result.affectedRows}`);
         res.json({ success: true });
-    } catch (err) { 
+    } catch (err) {
+        await conn.rollback();
         console.error(`[DCC] Delete failed: ${err.message}`);
-        res.status(500).json({ success: false, message: err.message }); 
+        res.status(500).json({ success: false, message: err.message });
+    } finally {
+        conn.release();
     }
 });
 
@@ -278,7 +343,7 @@ app.post('/api/inventory/master/push', async (req, res) => {
     } catch (err) { res.status(500).json({ success: false, message: err.message }); }
 });
 
-const { exec } = require('child_process');
+const { execFile } = require('child_process');
 const net = require('net');
 
 // --- PRINTER UTILITY (Ported from dgPOS) ---
@@ -306,25 +371,35 @@ async function sendToPrinter(data) {
     });
 }
 
+// Resolve python interpreter once — try python3 first, fall back to python
+function runPython(scriptPath, args, callback) {
+    execFile('python3', [scriptPath, ...args], (err, stdout, stderr) => {
+        if (err && (err.code === 'ENOENT' || err.code === 127)) {
+            execFile('python', [scriptPath, ...args], callback);
+        } else {
+            callback(err, stdout, stderr);
+        }
+    });
+}
+
 // --- LOCAL STORE MANAGEMENT (EMPLOYEES & LOGS) ---
 app.post('/api/print_sticker', (req, res) => {
     const { name, sku, upc, location, faces, department, pog_info } = req.body;
     if (!sku) return res.status(400).json({ success: false, message: 'SKU is required' });
 
-    // Path to the Python script
     const scriptPath = path.join(__dirname, '../RecieptApp/print_receipt.py');
-    const safeName = (name || '').replace(/"/g, '\\"');
-    const safeSku = (sku || '').replace(/"/g, '\\"');
-    const safeUpc = (upc || '').replace(/"/g, '\\"');
-    const safeLocation = (location || 'N/A').replace(/"/g, '\\"');
-    const safeFaces = (faces || 'F1').replace(/"/g, '\\"');
-    const safeDepartment = (department || 'GENERAL').replace(/"/g, '\\"');
-    const safePogInfo = (pog_info || '').replace(/"/g, '\\"');
+    const args = [
+        '--print-sticker',
+        '--name', name || '',
+        '--sku', String(sku),
+        '--upc', String(upc || ''),
+        '--location', location || 'N/A',
+        '--faces', faces || 'F1',
+        '--department', department || 'GENERAL',
+        '--pog-info', pog_info || ''
+    ];
 
-    const args = `"${scriptPath}" --print-sticker --name "${safeName}" --sku "${safeSku}" --upc "${safeUpc}" --location "${safeLocation}" --faces "${safeFaces}" --department "${safeDepartment}" --pog-info "${safePogInfo}"`;
-    const command = `python3 ${args} || python ${args}`;
-
-    exec(command, (error, stdout, stderr) => {
+    runPython(scriptPath, args, (error) => {
         if (error) {
             console.error(`Error printing sticker: ${error.message}`);
             return res.status(500).json({ success: false, message: error.message });
@@ -338,29 +413,21 @@ app.post('/api/print_shelf_label', (req, res) => {
     if (!upc) return res.status(400).json({ success: false, message: 'UPC is required' });
 
     const scriptPath = path.join(__dirname, '../RecieptApp/print_label.py');
+    const args = [
+        '--brand', brand || '',
+        '--name', name || '',
+        '--variant', variant || '',
+        '--size', size || '',
+        '--upc', String(upc),
+        '--price', String(price || 0),
+        '--unit-price', unit_price_unit || 'per each',
+        '--pog-date', pog_date || 'N/A',
+        '--location', location || 'N/A',
+        '--faces', faces || 'F1'
+    ];
+    if (taxable === true || taxable === 'true' || taxable === 1) args.push('--taxable');
 
-    // Safely escape strings for CLI
-    const safeBrand = (brand || '').replace(/"/g, '\\"');
-    const safeName = (name || '').replace(/"/g, '\\"');
-    const safeVariant = (variant || '').replace(/"/g, '\\"');
-    const safeSize = (size || '').replace(/"/g, '\\"');
-    const safeUpc = (upc || '').replace(/"/g, '\\"');
-    const safePrice = price || 0.00;
-    const safeUnitPrice = (unit_price_unit || 'per each').replace(/"/g, '\\"');
-    const safePogDate = (pog_date || 'N/A').replace(/"/g, '\\"');
-    const safeLocation = (location || 'N/A').replace(/"/g, '\\"');
-    const safeFaces = (faces || 'F1').replace(/"/g, '\\"');
-
-    let args = `"${scriptPath}" --brand "${safeBrand}" --name "${safeName}" --variant "${safeVariant}" --size "${safeSize}" --upc "${safeUpc}" --price ${safePrice} --unit-price "${safeUnitPrice}" --pog-date "${safePogDate}" --location "${safeLocation}" --faces "${safeFaces}"`;
-
-    // Only pass the flag if it is strictly true
-    if (taxable === true || taxable === "true" || taxable === 1) {
-        args += ` --taxable`;
-    }
-
-    const command = `python3 ${args} || python ${args}`;
-
-    exec(command, (error, stdout, stderr) => {
+    runPython(scriptPath, args, (error) => {
         if (error) {
             console.error(`Error printing shelf label: ${error.message}`);
             return res.status(500).json({ success: false, message: error.message });
@@ -400,7 +467,7 @@ app.post('/api/employees/local/update', async (req, res) => {
     } catch (err) { res.status(500).json({ success: false, message: err.message }); }
 });
 
-app.post('/api/employees/local/delete', async (req, res) => {
+app.post('/api/employees/local/delete', requireAuth, async (req, res) => {
     const { eid } = req.body;
     try {
         await req.pool.query('DELETE FROM users WHERE eid = ?', [eid]);
@@ -478,7 +545,7 @@ app.post('/api/inventory/local/delete', async (req, res) => {
     } catch (err) { res.status(500).json({ success: false, message: err.message }); }
 });
 
-app.post('/api/inventory/local/clear', async (req, res) => {
+app.post('/api/inventory/local/clear', requireAuth, async (req, res) => {
     try {
         await req.pool.query('DELETE FROM inventory');
         res.json({ success: true, message: 'Store inventory cleared.' });
@@ -1193,6 +1260,297 @@ app.post('/api/bopis/finalize/:id', async (req, res) => {
         } catch (printErr) { console.error("Printing failed:", printErr.message); }
 
         res.json({ success: true, message: order.is_mock ? "Test order finalized (No inventory impact)." : "Order finalized and receipt printed.", subtotal, tax, total });
+    } catch (err) { res.status(500).json({ success: false, message: err.message }); }
+});
+
+// --- SCHEDULE APIS ---
+
+app.get('/api/schedule/week', async (req, res) => {
+    // ?date=YYYY-MM-DD  →  returns shifts + time punches for the Mon-Sun week containing that date
+    try {
+        const dateStr = req.query.date || new Date().toISOString().slice(0, 10);
+        const d = new Date(dateStr + 'T00:00:00');
+        const dayOfWeek = d.getDay();
+        const diffToMon = (dayOfWeek === 0) ? -6 : 1 - dayOfWeek;
+        const monday = new Date(d);
+        monday.setDate(d.getDate() + diffToMon);
+        const sunday = new Date(monday);
+        sunday.setDate(monday.getDate() + 6);
+
+        const monStr = monday.toISOString().slice(0, 10);
+        const sunStr = sunday.toISOString().slice(0, 10);
+
+        const [shiftRows] = await req.pool.query(
+            `SELECT s.*, u.name AS employee_name FROM shifts s
+             LEFT JOIN users u ON s.eid = u.eid
+             WHERE s.shift_date BETWEEN ? AND ?
+             ORDER BY s.shift_date, s.start_time`,
+            [monStr, sunStr]
+        );
+
+        // Normalize DATE columns — MySQL2 returns them as JS Date objects, not strings.
+        // Use local date parts (not toISOString/UTC) to avoid timezone-offset date shifting.
+        const toDateStr = (v) => {
+            if (v instanceof Date) return `${v.getFullYear()}-${String(v.getMonth()+1).padStart(2,'0')}-${String(v.getDate()).padStart(2,'0')}`;
+            return String(v).slice(0, 10);
+        };
+        const shifts = shiftRows.map(s => ({ ...s, shift_date: toDateStr(s.shift_date) }));
+
+        // Fetch all time punches for the week and group by eid+date
+        const [punchRows] = await req.pool.query(
+            `SELECT tp.eid, tp.action, tp.timestamp, u.name AS employee_name
+             FROM time_punches tp
+             LEFT JOIN users u ON tp.eid = u.eid
+             WHERE DATE(tp.timestamp) BETWEEN ? AND ?
+             ORDER BY tp.timestamp ASC`,
+            [monStr, sunStr]
+        );
+
+        // Build a lookup: "eid_YYYY-MM-DD" → { eid, name, date, actions: [{action, time}] }
+        // Use local date parts so late-night punches land on the correct local day.
+        const punches = {};
+        punchRows.forEach(p => {
+            const ts = new Date(p.timestamp);
+            const dateKey = `${ts.getFullYear()}-${String(ts.getMonth()+1).padStart(2,'0')}-${String(ts.getDate()).padStart(2,'0')}`;
+            const key = `${p.eid}_${dateKey}`;
+            if (!punches[key]) punches[key] = { eid: p.eid, name: p.employee_name, date: dateKey, actions: [] };
+            punches[key].actions.push({
+                action: p.action,
+                time: ts.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: true })
+            });
+        });
+
+        res.json({ weekStart: monStr, weekEnd: sunStr, shifts, punches });
+    } catch (err) { res.status(500).json({ success: false, message: err.message }); }
+});
+
+app.post('/api/schedule/shift', requireAuth, async (req, res) => {
+    const { eid, shift_date, start_time, end_time, position, notes } = req.body;
+    if (!eid || !shift_date || !start_time || !end_time) {
+        return res.status(400).json({ success: false, message: 'eid, shift_date, start_time, end_time are required.' });
+    }
+    try {
+        const [result] = await req.pool.query(
+            'INSERT INTO shifts (eid, shift_date, start_time, end_time, position, notes) VALUES (?, ?, ?, ?, ?, ?)',
+            [eid, shift_date, start_time, end_time, position || 'SA', notes || null]
+        );
+        res.json({ success: true, id: result.insertId });
+    } catch (err) { res.status(500).json({ success: false, message: err.message }); }
+});
+
+app.put('/api/schedule/shift/:id', requireAuth, async (req, res) => {
+    const { eid, shift_date, start_time, end_time, position, notes } = req.body;
+    try {
+        await req.pool.query(
+            'UPDATE shifts SET eid=?, shift_date=?, start_time=?, end_time=?, position=?, notes=? WHERE id=?',
+            [eid, shift_date, start_time, end_time, position || 'SA', notes || null, req.params.id]
+        );
+        res.json({ success: true });
+    } catch (err) { res.status(500).json({ success: false, message: err.message }); }
+});
+
+app.delete('/api/schedule/shift/:id', requireAuth, async (req, res) => {
+    try {
+        await req.pool.query('DELETE FROM shifts WHERE id = ?', [req.params.id]);
+        res.json({ success: true });
+    } catch (err) { res.status(500).json({ success: false, message: err.message }); }
+});
+
+// --- PROMOTIONS / COUPON APIS ---
+
+app.get('/api/promotions', async (req, res) => {
+    try {
+        const [rows] = await req.pool.query('SELECT * FROM promotions ORDER BY type, id DESC');
+        res.json(rows);
+    } catch (err) { res.status(500).json({ success: false, message: err.message }); }
+});
+
+app.post('/api/promotions', requireAuth, async (req, res) => {
+    const { type, title, discount, minimum, fine_print, valid_date } = req.body;
+    if (!type || !title || discount == null || minimum == null) {
+        return res.status(400).json({ success: false, message: 'type, title, discount, minimum are required.' });
+    }
+    try {
+        // Deactivate any existing active promotion of the same type before adding new one
+        await req.pool.query('UPDATE promotions SET active = FALSE WHERE type = ? AND active = TRUE', [type]);
+        const [result] = await req.pool.query(
+            'INSERT INTO promotions (type, title, discount, minimum, fine_print, valid_date, active) VALUES (?, ?, ?, ?, ?, ?, TRUE)',
+            [type, title, discount, minimum, fine_print || null, valid_date || null]
+        );
+        res.json({ success: true, id: result.insertId });
+    } catch (err) { res.status(500).json({ success: false, message: err.message }); }
+});
+
+app.put('/api/promotions/:id', requireAuth, async (req, res) => {
+    const { title, discount, minimum, fine_print, valid_date, active } = req.body;
+    try {
+        await req.pool.query(
+            'UPDATE promotions SET title=?, discount=?, minimum=?, fine_print=?, valid_date=?, active=? WHERE id=?',
+            [title, discount, minimum, fine_print || null, valid_date || null, active ? 1 : 0, req.params.id]
+        );
+        res.json({ success: true });
+    } catch (err) { res.status(500).json({ success: false, message: err.message }); }
+});
+
+app.delete('/api/promotions/:id', requireAuth, async (req, res) => {
+    try {
+        await req.pool.query('DELETE FROM promotions WHERE id = ?', [req.params.id]);
+        res.json({ success: true });
+    } catch (err) { res.status(500).json({ success: false, message: err.message }); }
+});
+
+// --- TIME PUNCHES (read-only from web) ---
+
+app.get('/api/timepunches', async (req, res) => {
+    try {
+        const { eid, date } = req.query;
+        let sql = `SELECT tp.*, u.name AS employee_name FROM time_punches tp
+                   LEFT JOIN users u ON tp.eid = u.eid WHERE 1=1`;
+        const params = [];
+        if (eid) { sql += ' AND tp.eid = ?'; params.push(eid); }
+        if (date) { sql += ' AND DATE(tp.timestamp) = ?'; params.push(date); }
+        sql += ' ORDER BY tp.timestamp DESC LIMIT 500';
+        const [rows] = await req.pool.query(sql, params);
+        res.json(rows);
+    } catch (err) { res.status(500).json({ success: false, message: err.message }); }
+});
+
+app.delete('/api/timepunches/:eid/:date', requireAuth, async (req, res) => {
+    try {
+        await req.pool.query(
+            'DELETE FROM time_punches WHERE eid = ? AND DATE(timestamp) = ?',
+            [req.params.eid, req.params.date]
+        );
+        res.json({ success: true });
+    } catch (err) { res.status(500).json({ success: false, message: err.message }); }
+});
+
+// --- MARKDOWN / EVENT CHECK (bypasses storeContext via /api/inventory/event* prefix) ---
+
+app.get('/api/inventory/event_check/:sku', async (req, res) => {
+    try {
+        const [rows] = await enterprisePool().query(
+            `SELECT pe.id, pe.name, pe.type, ei.price
+             FROM event_items ei
+             JOIN pricing_events pe ON ei.event_id = pe.id
+             WHERE ei.sku = ? AND pe.status = 'ACTIVE'`,
+            [req.params.sku]
+        );
+        res.json({ success: true, events: rows });
+    } catch (err) { res.status(500).json({ success: false, message: err.message }); }
+});
+
+// --- TASKS APIs ---
+
+app.get('/api/tasks', async (req, res) => {
+    try {
+        const [rows] = await req.pool.query(
+            `SELECT t.*, u.name AS assigned_name FROM tasks t
+             LEFT JOIN users u ON t.assigned_eid = u.eid
+             ORDER BY FIELD(t.priority,'HIGH','NORMAL','LOW'), t.due_date ASC, t.created_at ASC`
+        );
+        res.json(rows);
+    } catch (err) { res.status(500).json({ success: false, message: err.message }); }
+});
+
+app.post('/api/tasks', requireAuth, async (req, res) => {
+    const { title, description, assigned_eid, due_date, priority } = req.body;
+    if (!title) return res.status(400).json({ success: false, message: 'title required' });
+    try {
+        const [result] = await req.pool.query(
+            'INSERT INTO tasks (title, description, assigned_eid, due_date, priority) VALUES (?,?,?,?,?)',
+            [title, description || null, assigned_eid || null, due_date || null, priority || 'NORMAL']
+        );
+        res.json({ success: true, id: result.insertId });
+    } catch (err) { res.status(500).json({ success: false, message: err.message }); }
+});
+
+app.put('/api/tasks/:id', async (req, res) => {
+    const { status } = req.body;
+    try {
+        await req.pool.query('UPDATE tasks SET status = ? WHERE id = ?', [status, req.params.id]);
+        res.json({ success: true });
+    } catch (err) { res.status(500).json({ success: false, message: err.message }); }
+});
+
+app.delete('/api/tasks/:id', requireAuth, async (req, res) => {
+    try {
+        await req.pool.query('DELETE FROM tasks WHERE id = ?', [req.params.id]);
+        res.json({ success: true });
+    } catch (err) { res.status(500).json({ success: false, message: err.message }); }
+});
+
+// --- CYCLE COUNT APIs ---
+
+app.post('/api/print_section_barcode', async (req, res) => {
+    const { pog_id, name, dims, suffix, section } = req.body;
+    if (!pog_id || !section) return res.status(400).json({ success: false, message: 'pog_id and section required' });
+    try {
+        const barcodeData = `CYCL_${pog_id}_${section}`;
+        const payload = `{B${barcodeData}`;
+        const data = Buffer.concat([
+            ESC.INIT,
+            ESC.CENTER,
+            Buffer.from([0x1D, 0x48, 0x02]),             // HRI below
+            Buffer.from([0x1D, 0x68, 0x60]),             // barcode height 96 dots
+            Buffer.from([0x1D, 0x77, 0x02]),             // barcode width multiplier 2
+            Buffer.from([0x1D, 0x6B, 0x49, payload.length]), // Code128
+            Buffer.from(payload, 'ascii'),
+            ESC.BOLD_ON,
+            Buffer.from(`\nID: ${pog_id}_${name}_${dims}_${suffix}\nSEC: ${section}\n`),
+            ESC.BOLD_OFF,
+            ESC.FEED_3
+        ]);
+        await sendToPrinter(data);
+        res.json({ success: true });
+    } catch (err) { res.status(500).json({ success: false, message: err.message }); }
+});
+
+app.get('/api/cyclecount/section/:pogId/:section', async (req, res) => {
+    try {
+        const { pogId, section } = req.params;
+        const [pogRows] = await enterprisePool().query('SELECT * FROM planograms WHERE pog_id = ?', [pogId]);
+        if (pogRows.length === 0) return res.status(404).json({ success: false, message: `POG ${pogId} not found` });
+        const pog = pogRows[0];
+
+        const [items] = await enterprisePool().query(
+            `SELECT pi.sku, pi.section, pi.shelf, pi.faces, pi.position, m.name, m.upc
+             FROM planogram_items pi
+             JOIN master_inventory m ON pi.sku = m.sku
+             WHERE pi.planogram_id = ? AND pi.section = ?
+             ORDER BY pi.shelf, pi.position`,
+            [pog.id, section]
+        );
+
+        const skus = items.map(i => i.sku);
+        const quantities = {};
+        if (skus.length > 0) {
+            const [invRows] = await req.pool.query(
+                `SELECT sku, quantity FROM inventory WHERE sku IN (${skus.map(() => '?').join(',')})`,
+                skus
+            );
+            invRows.forEach(r => { quantities[r.sku] = r.quantity; });
+        }
+
+        res.json({
+            success: true,
+            pog_id: pog.pog_id,
+            pog_name: pog.name,
+            section,
+            items: items.map(i => ({ ...i, quantity: quantities[i.sku] ?? 0 }))
+        });
+    } catch (err) { res.status(500).json({ success: false, message: err.message }); }
+});
+
+app.post('/api/cyclecount/submit', async (req, res) => {
+    const { counts } = req.body;
+    if (!Array.isArray(counts) || counts.length === 0)
+        return res.status(400).json({ success: false, message: 'counts array required' });
+    try {
+        for (const { sku, counted_qty } of counts) {
+            await req.pool.query('UPDATE inventory SET quantity = ? WHERE sku = ?', [counted_qty, sku]);
+        }
+        res.json({ success: true, updated: counts.length });
     } catch (err) { res.status(500).json({ success: false, message: err.message }); }
 });
 

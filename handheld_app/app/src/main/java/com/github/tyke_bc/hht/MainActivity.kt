@@ -21,6 +21,8 @@ class MainActivity : ComponentActivity() {
     companion object {
         private val _scanEvents = MutableSharedFlow<String>(extraBufferCapacity = 1)
         val scanEvents = _scanEvents.asSharedFlow()
+        var loggedInUser: String = "Default User"
+        var loggedInRole: String = "SA"
     }
 
     private val scanReceiver = object : BroadcastReceiver() {
