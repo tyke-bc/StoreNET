@@ -1,7 +1,8 @@
 - [StoreNET project overview](project_storenet_overview.md) — DG-style store ops suite: backoffice_web + dgPOS + handheld_app; testbed not real deployment
-- [POG reset workflow design](project_pog_reset_design.md) — tag-scan-triggered planogram reset flow, designed 2026-04-13, not yet implemented
+- [POG reset workflow](project_pog_reset.md) — tag-scan-triggered planogram reset flow, implemented across server + HHT
 - [PRP Returns feature](project_prp_returns.md) — batch/close/ship flow shipped 2026-04-16 across server + HHT + dashboard
 - [Vendors / DSD / DG Respond](project_vendors_dsd.md) — vendor master data + /respond tablet app + HHT vendor deliveries, shipped 2026-04-16
 - [Session continuity expectation](feedback_session_continuity.md) — user expects memory to carry across sessions; save proactively, check before asking
 - [Deployment topology](reference_deployment.md) — server runs on separate Linux box (SSH'd from Windows dev); printer is USB to Linux host, CUPS queue HP4155
 - [Express route-order gotcha](feedback_express_route_order.md) — specific static routes must be registered before `:id` wildcards or they get shadowed and silently no-op
+- [Extensions 2026-04-17](project_extensions_2026_04_17.md) — BOPIS short-pick reasons, POG reset history/HHT card, vendor visits check-in log, recurring tasks generator
