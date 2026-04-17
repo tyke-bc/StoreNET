@@ -380,6 +380,15 @@
                     </thead>
                     <tbody></tbody>
                 </table>
+
+                <div class="card" style="margin-top:20px;">
+                    <h3 style="margin-top:0;">Short-Pick Report <span style="font-weight:normal; font-size:12px; color:#64748b;">(last 30 days)</span></h3>
+                    <div id="shortPickSummary" style="display:flex; gap:10px; flex-wrap:wrap; margin-bottom:12px;"></div>
+                    <table class="data-table" id="shortPickTable" style="font-size:12px;">
+                        <thead><tr><th>SKU</th><th>Name</th><th>Reason</th><th>Occurrences</th><th>Units Short</th></tr></thead>
+                        <tbody></tbody>
+                    </table>
+                </div>
             </div>
             <div id="module-truck-receiving" class="module-view" style="display: none;">
                 <div class="tab-bar">
@@ -524,6 +533,83 @@
                     <thead><tr><th>Priority</th><th>Title</th><th>Assigned To</th><th>Due Date</th><th>Actions</th></tr></thead>
                     <tbody></tbody>
                 </table>
+
+                <div class="card" style="margin-top:24px;">
+                    <div style="display:flex; justify-content:space-between; align-items:center;">
+                        <h3 style="margin:0;">Recurring Task Rules</h3>
+                        <button class="primary" onclick="openRecurrenceModal()">+ New Rule</button>
+                    </div>
+                    <p style="color:#64748b; font-size:12px; margin:4px 0 10px;">
+                        Rules auto-generate tasks on their schedule (daily / weekly / monthly). A background job checks hourly.
+                    </p>
+                    <table class="data-table" id="recurrenceTable" style="font-size:12px;">
+                        <thead><tr><th>Title</th><th>Type</th><th>Schedule</th><th>Priority</th><th>Last Generated</th><th>Active</th><th>Actions</th></tr></thead>
+                        <tbody></tbody>
+                    </table>
+                </div>
+
+                <div class="card" style="margin-top:24px;">
+                    <h3 style="margin-top:0;">POG Reset History</h3>
+                    <div style="display:flex; gap:8px; margin-bottom:10px;">
+                        <button onclick="loadResetHistory('OPEN')" id="resetFilterOpen" class="primary">Open</button>
+                        <button onclick="loadResetHistory('DONE')" id="resetFilterDone">Completed</button>
+                        <button onclick="loadResetHistory('ALL')" id="resetFilterAll">All</button>
+                    </div>
+                    <table class="data-table" id="resetHistoryTable" style="font-size:12px;">
+                        <thead><tr><th>Title</th><th>Status</th><th>Progress</th><th>Last Scan</th><th>By</th><th>Completed</th></tr></thead>
+                        <tbody></tbody>
+                    </table>
+                </div>
+            </div>
+
+            <!-- Recurrence rule modal -->
+            <div class="modal" id="recurrenceModal" style="display:none; position:fixed; inset:0; background:rgba(0,0,0,0.5); z-index:1000; align-items:center; justify-content:center;">
+                <div style="background:white; padding:24px; border-radius:12px; max-width:500px; width:90%;">
+                    <h2 id="recurrenceModalTitle">New Recurring Rule</h2>
+                    <input type="hidden" id="recurrenceId">
+                    <label style="font-size:11px;color:#64748b;">Title</label>
+                    <input type="text" id="recTitle" style="width:100%;padding:8px;margin-bottom:6px;" placeholder="Daily cash drop audit">
+                    <label style="font-size:11px;color:#64748b;">Description</label>
+                    <textarea id="recDescription" style="width:100%;padding:8px;height:50px;"></textarea>
+                    <div style="display:grid; grid-template-columns:1fr 1fr; gap:10px; margin-top:8px;">
+                        <div>
+                            <label style="font-size:11px;color:#64748b;">Recurrence</label>
+                            <select id="recType" style="width:100%;padding:8px;" onchange="onRecTypeChange()">
+                                <option value="DAILY">Daily</option>
+                                <option value="WEEKLY">Weekly</option>
+                                <option value="MONTHLY">Monthly</option>
+                            </select>
+                        </div>
+                        <div>
+                            <label style="font-size:11px;color:#64748b;">Priority</label>
+                            <select id="recPriority" style="width:100%;padding:8px;">
+                                <option value="LOW">Low</option>
+                                <option value="NORMAL" selected>Normal</option>
+                                <option value="HIGH">High</option>
+                            </select>
+                        </div>
+                    </div>
+                    <div id="recWeeklyBox" style="display:none; margin-top:8px;">
+                        <label style="font-size:11px;color:#64748b;">Day of week</label>
+                        <select id="recDow" style="width:100%;padding:8px;">
+                            <option value="0">Sunday</option><option value="1">Monday</option>
+                            <option value="2">Tuesday</option><option value="3">Wednesday</option>
+                            <option value="4">Thursday</option><option value="5">Friday</option>
+                            <option value="6">Saturday</option>
+                        </select>
+                    </div>
+                    <div id="recMonthlyBox" style="display:none; margin-top:8px;">
+                        <label style="font-size:11px;color:#64748b;">Day of month (1-31)</label>
+                        <input type="number" id="recDom" min="1" max="31" value="1" style="width:100%;padding:8px;">
+                    </div>
+                    <div style="margin-top:8px;">
+                        <label><input type="checkbox" id="recActive" checked> Active</label>
+                    </div>
+                    <div style="display:flex; gap:10px; justify-content:flex-end; margin-top:16px;">
+                        <button onclick="document.getElementById('recurrenceModal').style.display='none'">Cancel</button>
+                        <button class="primary" onclick="saveRecurrence()">Save</button>
+                    </div>
+                </div>
             </div>
 
             <div id="module-vendors" class="module-view" style="display: none;">
@@ -540,6 +626,24 @@
                     <thead><tr><th>Code</th><th>Name</th><th>Contact</th><th>Schedule</th><th>SKUs</th><th>Active</th><th>Actions</th></tr></thead>
                     <tbody></tbody>
                 </table>
+
+                <div class="card" style="margin-top:24px;">
+                    <div style="display:flex; justify-content:space-between; align-items:center;">
+                        <h3 style="margin:0;">Vendor Visits (check-in log)</h3>
+                        <div>
+                            <button onclick="loadVendorVisits('active')" id="vvFilterActive" class="primary">On-Site Now</button>
+                            <button onclick="loadVendorVisits('all')" id="vvFilterAll">Recent</button>
+                        </div>
+                    </div>
+                    <p style="color:#64748b; font-size:12px; margin:4px 0 10px;">
+                        Every rep check-in logged by HHT (DG Respond). Click a row to see returns / orders / deliveries captured during that visit.
+                    </p>
+                    <table class="data-table" id="vendorVisitsTable" style="font-size:12px;">
+                        <thead><tr><th>Vendor</th><th>Rep</th><th>Checked In</th><th>Checked Out</th><th>Duration</th><th></th></tr></thead>
+                        <tbody></tbody>
+                    </table>
+                    <div id="vendorVisitDetail" style="display:none; margin-top:16px; padding:12px; background:#f8fafc; border:1px solid #e2e8f0; border-radius:8px;"></div>
+                </div>
             </div>
 
             <!-- Vendor create/edit modal -->
@@ -1242,14 +1346,14 @@
             if(module === 'pogs') loadPogs();
             if(module === 'prices') loadPriceEvents();
             if(module === 'messaging') loadMessages();
-            if(module === 'online-orders') loadOnlineOrders();
+            if(module === 'online-orders') { loadOnlineOrders(); loadShortPickReport(); }
             if(module === 'truck-receiving') loadManifests();
             if(module === 'rolltainers') loadRolltainers();
             if(module === 'schedule') loadSchedule();
             if(module === 'promotions') loadPromotions();
-            if(module === 'tasks') loadTasks('OPEN');
+            if(module === 'tasks') { loadTasks('OPEN'); loadRecurrence(); loadResetHistory('OPEN'); }
             if(module === 'prp') loadPrp('OPEN');
-            if(module === 'vendors') loadVendors();
+            if(module === 'vendors') { loadVendors(); loadVendorVisits('active'); }
             if(module === 'reports') loadReportsModule();
         }
 
@@ -3664,6 +3768,195 @@
                 container.appendChild(btn);
             });
             document.getElementById('deptReportModal').style.display = 'flex';
+        }
+
+        // --- BOPIS SHORT-PICK REPORT ---
+        async function loadShortPickReport() {
+            try {
+                const r = await apiFetch('/api/bopis/short-pick-report?days=30');
+                if (!r.success) return;
+                const palette = { OOS:'#ef4444', DAMAGED:'#f59e0b', NOT_FOUND:'#8b5cf6', SUB_OFFERED:'#0ea5e9' };
+                const sum = document.getElementById('shortPickSummary');
+                sum.innerHTML = (r.summary || []).map(s =>
+                    `<div style="background:${palette[s.reason]||'#64748b'}; color:white; padding:8px 12px; border-radius:6px; min-width:110px;">
+                        <div style="font-size:10px; opacity:0.85;">${s.reason}</div>
+                        <div style="font-size:20px; font-weight:bold;">${s.occurrences}</div>
+                        <div style="font-size:10px;">${s.units_short} units short</div>
+                    </div>`).join('') || '<span style="color:#64748b; font-size:12px;">No short-picks in window.</span>';
+                const tb = document.querySelector('#shortPickTable tbody');
+                tb.innerHTML = (r.top_skus || []).map(x =>
+                    `<tr><td>${x.sku}</td><td>${x.name||''}</td><td><b>${x.reason}</b></td><td>${x.occurrences}</td><td>${x.units_short}</td></tr>`
+                ).join('') || '<tr><td colspan="5" style="color:#64748b;">No data.</td></tr>';
+            } catch (e) { console.error('short-pick report', e); }
+        }
+
+        // --- POG RESET HISTORY ---
+        async function loadResetHistory(status) {
+            ['resetFilterOpen','resetFilterDone','resetFilterAll'].forEach(id => document.getElementById(id).classList.remove('primary'));
+            document.getElementById('resetFilter'+(status==='OPEN'?'Open':status==='DONE'?'Done':'All')).classList.add('primary');
+            try {
+                const r = await apiFetch('/api/pogs/reset/tasks?status=' + status + '&limit=50');
+                const tb = document.querySelector('#resetHistoryTable tbody');
+                if (!r.success || !(r.tasks || []).length) {
+                    tb.innerHTML = '<tr><td colspan="6" style="color:#64748b;">No reset tasks.</td></tr>';
+                    return;
+                }
+                tb.innerHTML = r.tasks.map(t => {
+                    const pct = t.pog_total > 0 ? Math.round(100 * t.pog_done / t.pog_total) : 0;
+                    const color = t.status === 'DONE' ? '#16a34a' : (t.pog_done > 0 ? '#8b5cf6' : '#64748b');
+                    const progress = `<div style="background:#e5e7eb; height:8px; border-radius:4px; width:100px; overflow:hidden;">
+                        <div style="background:${color}; height:100%; width:${pct}%;"></div>
+                    </div><span style="font-size:10px;">${t.pog_done}/${t.pog_total}</span>`;
+                    const last = t.last_scan_at ? new Date(t.last_scan_at).toLocaleString() : '—';
+                    const done = t.completed_at ? new Date(t.completed_at).toLocaleString() : '—';
+                    return `<tr><td>${t.title}</td><td><b style="color:${color}">${t.status}</b></td><td>${progress}</td><td>${last}</td><td>${t.last_scan_by || '—'}</td><td>${done}</td></tr>`;
+                }).join('');
+            } catch (e) { console.error('reset history', e); }
+        }
+
+        // --- VENDOR VISITS ---
+        async function loadVendorVisits(mode) {
+            ['vvFilterActive','vvFilterAll'].forEach(id => document.getElementById(id).classList.remove('primary'));
+            document.getElementById('vvFilter' + (mode === 'active' ? 'Active' : 'All')).classList.add('primary');
+            try {
+                const path = mode === 'active' ? '/api/vendor-visits/active' : '/api/vendor-visits?limit=50';
+                const r = await apiFetch(path);
+                const tb = document.querySelector('#vendorVisitsTable tbody');
+                document.getElementById('vendorVisitDetail').style.display = 'none';
+                if (!r.success || !(r.visits || []).length) {
+                    tb.innerHTML = '<tr><td colspan="6" style="color:#64748b;">No visits.</td></tr>';
+                    return;
+                }
+                tb.innerHTML = r.visits.map(v => {
+                    const start = v.checked_in_at ? new Date(v.checked_in_at) : null;
+                    const end = v.checked_out_at ? new Date(v.checked_out_at) : null;
+                    const dur = (start && end) ? `${Math.max(1, Math.round((end - start) / 60000))} min` : (start ? 'on-site' : '—');
+                    return `<tr onclick="viewVendorVisit(${v.id})" style="cursor:pointer;">
+                        <td>${v.vendor_name || '#'+v.vendor_id}</td>
+                        <td>${v.rep_name || '—'}</td>
+                        <td>${start ? start.toLocaleString() : '—'}</td>
+                        <td>${end ? end.toLocaleString() : '<span style="color:#0ea5e9;">On-site</span>'}</td>
+                        <td>${dur}</td>
+                        <td><span style="color:#0ea5e9;">view ›</span></td>
+                    </tr>`;
+                }).join('');
+            } catch (e) { console.error('vendor visits', e); }
+        }
+
+        async function viewVendorVisit(id) {
+            try {
+                const r = await apiFetch('/api/vendor-visits/' + id);
+                if (!r.success) return;
+                const box = document.getElementById('vendorVisitDetail');
+                const a = r.activity || {};
+                const list = (rows, label) => rows.length
+                    ? `<b>${label}:</b> ${rows.map(x => `#${x.id} <span style="color:#64748b;">(${x.status})</span>`).join(', ')}`
+                    : `<span style="color:#94a3b8;">${label}: none</span>`;
+                box.innerHTML = `
+                    <h4 style="margin:0 0 8px 0;">Visit #${r.visit.id} — ${r.vendor?.name || 'vendor #' + r.visit.vendor_id}</h4>
+                    <div style="font-size:12px; color:#64748b; margin-bottom:8px;">
+                        Rep: ${r.visit.rep_name || '—'} · In: ${new Date(r.visit.checked_in_at).toLocaleString()}
+                        · Out: ${r.visit.checked_out_at ? new Date(r.visit.checked_out_at).toLocaleString() : '<span style="color:#0ea5e9;">on-site</span>'}
+                    </div>
+                    <div style="display:flex; flex-direction:column; gap:4px; font-size:12px;">
+                        <div>${list(a.returns || [], 'Returns')}</div>
+                        <div>${list(a.orders || [], 'Orders')}</div>
+                        <div>${list(a.deliveries || [], 'Deliveries')}</div>
+                    </div>
+                    ${r.visit.notes ? `<div style="margin-top:8px; font-size:12px;"><b>Notes:</b> ${r.visit.notes}</div>` : ''}`;
+                box.style.display = 'block';
+            } catch (e) { console.error('visit detail', e); }
+        }
+
+        // --- RECURRING TASK RULES ---
+        async function loadRecurrence() {
+            try {
+                const r = await apiFetch('/api/task-recurrence');
+                const tb = document.querySelector('#recurrenceTable tbody');
+                if (!r.success || !(r.rules || []).length) {
+                    tb.innerHTML = '<tr><td colspan="7" style="color:#64748b;">No rules.</td></tr>';
+                    return;
+                }
+                const dowNames = ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'];
+                tb.innerHTML = r.rules.map(x => {
+                    let sched = 'every day';
+                    if (x.recurrence_type === 'WEEKLY') sched = `every ${dowNames[x.day_of_week] || '?'}`;
+                    else if (x.recurrence_type === 'MONTHLY') sched = `day ${x.day_of_month} of month`;
+                    return `<tr>
+                        <td>${x.title}</td>
+                        <td>${x.recurrence_type}</td>
+                        <td>${sched}</td>
+                        <td>${x.priority}</td>
+                        <td>${x.last_generated_date || '—'}</td>
+                        <td>${x.active ? '<b style="color:#16a34a">ON</b>' : '<span style="color:#94a3b8;">OFF</span>'}</td>
+                        <td>
+                            <button onclick='editRecurrence(${JSON.stringify(x).replace(/'/g, "&#39;")})'>Edit</button>
+                            <button onclick="deleteRecurrence(${x.id})" style="color:#ef4444;">Delete</button>
+                        </td>
+                    </tr>`;
+                }).join('');
+            } catch (e) { console.error('recurrence', e); }
+        }
+
+        function onRecTypeChange() {
+            const t = document.getElementById('recType').value;
+            document.getElementById('recWeeklyBox').style.display = t === 'WEEKLY' ? 'block' : 'none';
+            document.getElementById('recMonthlyBox').style.display = t === 'MONTHLY' ? 'block' : 'none';
+        }
+
+        function openRecurrenceModal() {
+            document.getElementById('recurrenceModalTitle').innerText = 'New Recurring Rule';
+            document.getElementById('recurrenceId').value = '';
+            document.getElementById('recTitle').value = '';
+            document.getElementById('recDescription').value = '';
+            document.getElementById('recType').value = 'DAILY';
+            document.getElementById('recPriority').value = 'NORMAL';
+            document.getElementById('recDow').value = '1';
+            document.getElementById('recDom').value = '1';
+            document.getElementById('recActive').checked = true;
+            onRecTypeChange();
+            document.getElementById('recurrenceModal').style.display = 'flex';
+        }
+
+        function editRecurrence(rule) {
+            document.getElementById('recurrenceModalTitle').innerText = 'Edit Recurring Rule';
+            document.getElementById('recurrenceId').value = rule.id;
+            document.getElementById('recTitle').value = rule.title || '';
+            document.getElementById('recDescription').value = rule.description || '';
+            document.getElementById('recType').value = rule.recurrence_type;
+            document.getElementById('recPriority').value = rule.priority;
+            if (rule.day_of_week != null) document.getElementById('recDow').value = rule.day_of_week;
+            if (rule.day_of_month != null) document.getElementById('recDom').value = rule.day_of_month;
+            document.getElementById('recActive').checked = !!rule.active;
+            onRecTypeChange();
+            document.getElementById('recurrenceModal').style.display = 'flex';
+        }
+
+        async function saveRecurrence() {
+            const id = document.getElementById('recurrenceId').value;
+            const type = document.getElementById('recType').value;
+            const body = {
+                title: document.getElementById('recTitle').value.trim(),
+                description: document.getElementById('recDescription').value.trim(),
+                recurrence_type: type,
+                priority: document.getElementById('recPriority').value,
+                day_of_week: type === 'WEEKLY' ? Number(document.getElementById('recDow').value) : null,
+                day_of_month: type === 'MONTHLY' ? Number(document.getElementById('recDom').value) : null,
+                active: document.getElementById('recActive').checked
+            };
+            if (!body.title) { alert('Title required.'); return; }
+            const path = id ? '/api/task-recurrence/' + id : '/api/task-recurrence';
+            const r = await apiFetch(path, { method: id ? 'PUT' : 'POST', body: JSON.stringify(body) });
+            if (r.success) {
+                document.getElementById('recurrenceModal').style.display = 'none';
+                loadRecurrence();
+            } else alert(r.message || 'Failed to save rule.');
+        }
+
+        async function deleteRecurrence(id) {
+            if (!confirm('Delete this recurrence rule? Existing tasks it generated will stay.')) return;
+            const r = await apiFetch('/api/task-recurrence/' + id, { method: 'DELETE' });
+            if (r.success) loadRecurrence();
         }
     </script>
 

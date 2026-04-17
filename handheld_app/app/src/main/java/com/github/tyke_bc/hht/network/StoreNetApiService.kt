@@ -113,7 +113,12 @@ data class OnlineOrderItem(
     val name: String,
     val price: Double? = 0.0,
     @SerializedName("qty_ordered") val qtyOrdered: Int,
-    @SerializedName("qty_picked") val qtyPicked: Int
+    @SerializedName("qty_picked") val qtyPicked: Int,
+    @SerializedName("short_reason") val shortReason: String? = null
+)
+
+data class FinalizeOrderRequest(
+    @SerializedName("short_reasons") val shortReasons: Map<String, String>? = null
 )
 
 data class OrderDetailResponse(
@@ -186,7 +191,8 @@ interface StoreNetApiService {
     @POST("api/bopis/finalize/{id}")
     suspend fun finalizeOrder(
         @Header("X-Store-ID") storeId: String,
-        @Path("id") orderId: Int
+        @Path("id") orderId: Int,
+        @Body request: FinalizeOrderRequest = FinalizeOrderRequest()
     ): GenericResponse
 
     // Truck Receiving APIs
@@ -272,6 +278,13 @@ interface StoreNetApiService {
         @Path("id") id: Int,
         @Body request: UpdateTaskRequest
     ): GenericResponse
+
+    @GET("api/pogs/reset/tasks")
+    suspend fun getResetTasks(
+        @Header("X-Store-ID") storeId: String,
+        @retrofit2.http.Query("status") status: String = "OPEN",
+        @retrofit2.http.Query("limit") limit: Int = 25
+    ): ResetTasksResponse
 
     @POST("api/pogs/reset/scan")
     suspend fun scanResetTag(
@@ -412,6 +425,30 @@ interface StoreNetApiService {
         @Header("X-Store-ID") storeId: String,
         @Path("id") vendorId: Int
     ): List<VendorInventoryRow>
+
+    // Vendor visits (check-in log)
+    @GET("api/vendor-visits/active")
+    suspend fun getActiveVendorVisits(@Header("X-Store-ID") storeId: String): VendorVisitsResponse
+
+    @GET("api/vendor-visits")
+    suspend fun getVendorVisits(
+        @Header("X-Store-ID") storeId: String,
+        @retrofit2.http.Query("vendor_id") vendorId: Int? = null,
+        @retrofit2.http.Query("limit") limit: Int = 50
+    ): VendorVisitsResponse
+
+    @POST("api/vendor-visits")
+    suspend fun checkInVendor(
+        @Header("X-Store-ID") storeId: String,
+        @Body request: VendorCheckInRequest
+    ): CreateIdResponse
+
+    @POST("api/vendor-visits/{id}/checkout")
+    suspend fun checkOutVendor(
+        @Header("X-Store-ID") storeId: String,
+        @Path("id") id: Int,
+        @Body request: VendorCheckOutRequest = VendorCheckOutRequest()
+    ): GenericResponse
 
     // Resolve "VO-123" or "123" scanned on a DSD order sheet → SUBMITTED order + items
     @GET("api/vendor-orders/resolve/{code}")
@@ -673,6 +710,33 @@ data class Vendor(
     val notes: String?,
     val active: Int,
     @SerializedName("sku_count") val skuCount: Int? = 0
+)
+
+data class VendorVisit(
+    val id: Int,
+    @SerializedName("vendor_id") val vendorId: Int,
+    @SerializedName("vendor_code") val vendorCode: String?,
+    @SerializedName("vendor_name") val vendorName: String?,
+    @SerializedName("rep_name") val repName: String?,
+    @SerializedName("checked_in_at") val checkedInAt: String?,
+    @SerializedName("checked_out_at") val checkedOutAt: String?,
+    val notes: String?
+)
+
+data class VendorVisitsResponse(
+    val success: Boolean,
+    val visits: List<VendorVisit>?
+)
+
+data class VendorCheckInRequest(
+    @SerializedName("vendor_id") val vendorId: Int,
+    @SerializedName("rep_name") val repName: String?,
+    val eid: String?,
+    val notes: String? = null
+)
+
+data class VendorCheckOutRequest(
+    val notes: String? = null
 )
 
 data class VendorDelivery(
@@ -970,6 +1034,25 @@ data class ReviewResponse(
     val adjustments: List<ReviewAdjustment>?,
     val transfers: List<ReviewTransfer>?,
     @SerializedName("failed_compliance") val failedCompliance: List<ReviewComplianceFail>?
+)
+
+data class ResetTaskSummary(
+    val id: Int,
+    val title: String,
+    val status: String,
+    @SerializedName("created_at") val createdAt: String?,
+    @SerializedName("completed_at") val completedAt: String?,
+    @SerializedName("due_date") val dueDate: String?,
+    val priority: String?,
+    @SerializedName("pog_total") val pogTotal: Int,
+    @SerializedName("pog_done") val pogDone: Int,
+    @SerializedName("last_scan_at") val lastScanAt: String?,
+    @SerializedName("last_scan_by") val lastScanBy: String?
+)
+
+data class ResetTasksResponse(
+    val success: Boolean,
+    val tasks: List<ResetTaskSummary>?
 )
 
 data class ResetScanResponse(

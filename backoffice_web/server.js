@@ -108,6 +108,7 @@ const storeContext = async (req, res, next) => {
                 'ALTER TABLE online_orders ADD COLUMN subtotal DECIMAL(10,2) DEFAULT 0.00',
                 'ALTER TABLE online_orders ADD COLUMN tax DECIMAL(10,2) DEFAULT 0.00',
                 'ALTER TABLE online_order_items ADD COLUMN price DECIMAL(10,2) DEFAULT 0.00',
+                "ALTER TABLE online_order_items ADD COLUMN short_reason ENUM('OOS','DAMAGED','NOT_FOUND','SUB_OFFERED') NULL",
                 'ALTER TABLE inventory ADD COLUMN quantity_backstock INT DEFAULT 0',
                 'ALTER TABLE inventory ADD COLUMN pack_size INT DEFAULT 6',
                 'ALTER TABLE shifts MODIFY COLUMN eid VARCHAR(50) CHARACTER SET utf8mb4 COLLATE utf8mb4_0900_ai_ci NOT NULL',
@@ -337,6 +338,39 @@ const storeContext = async (req, res, next) => {
                 scanned_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 FOREIGN KEY (delivery_id) REFERENCES vendor_deliveries(id) ON DELETE CASCADE,
                 INDEX idx_vdi_delivery (delivery_id)
+            )`);
+
+            // Recurring task templates — nightly generator materializes tasks from these rules.
+            // recurrence_type DAILY (runs every day), WEEKLY (uses day_of_week 0=Sun..6=Sat),
+            // MONTHLY (uses day_of_month 1-31; if month has fewer days, clamps to last).
+            // last_generated_date guards against double-generation when the interval ticks multiple times/day.
+            await pool.query(`CREATE TABLE IF NOT EXISTS task_recurrence (
+                id INT AUTO_INCREMENT PRIMARY KEY,
+                title VARCHAR(255) NOT NULL,
+                description TEXT,
+                priority ENUM('LOW','NORMAL','HIGH') DEFAULT 'NORMAL',
+                task_type ENUM('GENERAL','POG_RESET') DEFAULT 'GENERAL',
+                recurrence_type ENUM('DAILY','WEEKLY','MONTHLY') NOT NULL,
+                day_of_week TINYINT NULL,
+                day_of_month TINYINT NULL,
+                active BOOLEAN DEFAULT TRUE,
+                last_generated_date DATE NULL,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                INDEX idx_tr_active (active)
+            )`);
+
+            // Vendor visit log — one row per vendor rep visit to the store. Links to returns/orders/deliveries
+            // created in the same window via timestamp queries (no FK since the rep may do nothing).
+            await pool.query(`CREATE TABLE IF NOT EXISTS vendor_visits (
+                id INT AUTO_INCREMENT PRIMARY KEY,
+                vendor_id INT NOT NULL,
+                rep_name VARCHAR(100),
+                checked_in_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                checked_out_at TIMESTAMP NULL,
+                checked_in_by_eid VARCHAR(50) CHARACTER SET utf8mb4 COLLATE utf8mb4_0900_ai_ci,
+                notes VARCHAR(500),
+                INDEX idx_vv_vendor (vendor_id),
+                INDEX idx_vv_time (checked_in_at)
             )`);
 
             // POG reset child rows (one per planogram in a reset task)
@@ -2341,6 +2375,49 @@ app.post('/api/pogs/reset/scan', async (req, res) => {
     } catch (err) { res.status(500).json({ success: false, message: err.message }); }
 });
 
+// In-progress + recently-completed reset tasks with progress counts.
+// Used by HHT home card ("resets pending") and dashboard Reset History panel.
+// Query ?status=OPEN|DONE|ALL (default OPEN), ?limit=25
+app.get('/api/pogs/reset/tasks', async (req, res) => {
+    const status = (req.query.status || 'OPEN').toUpperCase();
+    const limit = Math.min(100, Math.max(1, parseInt(req.query.limit) || 25));
+    try {
+        let where = "t.task_type = 'POG_RESET'";
+        const params = [];
+        if (status === 'OPEN' || status === 'DONE') {
+            where += ' AND t.status = ?';
+            params.push(status);
+        }
+        const [rows] = await req.pool.query(
+            `SELECT t.id, t.title, t.status, t.created_at, t.completed_at, t.due_date, t.priority,
+                    (SELECT COUNT(*) FROM task_pog_items WHERE task_id = t.id) AS pog_total,
+                    (SELECT COUNT(*) FROM task_pog_items WHERE task_id = t.id AND scanned_at IS NOT NULL) AS pog_done,
+                    (SELECT MAX(scanned_at) FROM task_pog_items WHERE task_id = t.id) AS last_scan_at,
+                    (SELECT scanned_by_name FROM task_pog_items WHERE task_id = t.id AND scanned_at IS NOT NULL ORDER BY scanned_at DESC LIMIT 1) AS last_scan_by
+             FROM tasks t
+             WHERE ${where}
+             ORDER BY (t.status = 'OPEN') DESC, COALESCE(t.completed_at, t.created_at) DESC
+             LIMIT ?`,
+            [...params, limit]
+        );
+        res.json({ success: true, tasks: rows });
+    } catch (err) { res.status(500).json({ success: false, message: err.message }); }
+});
+
+// Detail for a single reset task, including each child POG's scan state.
+app.get('/api/pogs/reset/tasks/:id', async (req, res) => {
+    try {
+        const [tasks] = await req.pool.query("SELECT * FROM tasks WHERE id = ? AND task_type = 'POG_RESET'", [req.params.id]);
+        if (tasks.length === 0) return res.status(404).json({ success: false, message: 'Reset task not found.' });
+        const [children] = await req.pool.query(
+            `SELECT id, pog_id, pog_name, pog_dimensions, pog_suffix, scanned_at, scanned_by_eid, scanned_by_name
+             FROM task_pog_items WHERE task_id = ? ORDER BY id ASC`,
+            [req.params.id]
+        );
+        res.json({ success: true, task: tasks[0], pog_items: children });
+    } catch (err) { res.status(500).json({ success: false, message: err.message }); }
+});
+
 // Reprint the signoff sheet for a completed reset task.
 app.post('/api/pogs/reset/reprint/:taskId', async (req, res) => {
     const storeId = req.headers['x-store-id'];
@@ -2556,6 +2633,41 @@ app.get('/api/bopis/order/:id', async (req, res) => {
         const [order] = await req.pool.query('SELECT * FROM online_orders WHERE id = ?', [req.params.id]);
         const [items] = await req.pool.query('SELECT * FROM online_order_items WHERE order_id = ?', [req.params.id]);
         res.json({ success: true, order: order[0], items: items });
+    } catch (err) { res.status(500).json({ success: false, message: err.message }); }
+});
+
+// Short-pick rollup — groups completed orders' short_reason rows by reason code, with optional day window.
+app.get('/api/bopis/short-pick-report', async (req, res) => {
+    const days = Math.min(365, Math.max(1, parseInt(req.query.days) || 30));
+    try {
+        const [summary] = await req.pool.query(
+            `SELECT ooi.short_reason AS reason,
+                    COUNT(*) AS occurrences,
+                    SUM(ooi.qty_ordered - ooi.qty_picked) AS units_short
+             FROM online_order_items ooi
+             JOIN online_orders oo ON ooi.order_id = oo.id
+             WHERE ooi.short_reason IS NOT NULL
+               AND oo.status = 'COMPLETED'
+               AND oo.created_at >= DATE_SUB(NOW(), INTERVAL ? DAY)
+             GROUP BY ooi.short_reason
+             ORDER BY occurrences DESC`,
+            [days]
+        );
+        const [topSkus] = await req.pool.query(
+            `SELECT ooi.sku, ooi.name, ooi.short_reason AS reason,
+                    COUNT(*) AS occurrences,
+                    SUM(ooi.qty_ordered - ooi.qty_picked) AS units_short
+             FROM online_order_items ooi
+             JOIN online_orders oo ON ooi.order_id = oo.id
+             WHERE ooi.short_reason IS NOT NULL
+               AND oo.status = 'COMPLETED'
+               AND oo.created_at >= DATE_SUB(NOW(), INTERVAL ? DAY)
+             GROUP BY ooi.sku, ooi.name, ooi.short_reason
+             ORDER BY occurrences DESC
+             LIMIT 20`,
+            [days]
+        );
+        res.json({ success: true, days, summary, top_skus: topSkus });
     } catch (err) { res.status(500).json({ success: false, message: err.message }); }
 });
 
@@ -2910,73 +3022,102 @@ app.post('/api/inventory/stock/rolltainer', async (req, res) => {
     } catch (err) { res.status(500).json({ success: false, message: err.message }); }
 });
 
-app.post('/api/bopis/finalize/:id', async (req, res) => {
-    try {
-        const [orderRows] = await req.pool.query('SELECT * FROM online_orders WHERE id = ?', [req.params.id]);
-        if (orderRows.length === 0) return res.status(404).json({ success: false, message: 'Order not found.' });
-        const order = orderRows[0];
-        const [items] = await req.pool.query('SELECT * FROM online_order_items WHERE order_id = ?', [req.params.id]);
+const BOPIS_SHORT_REASONS = ['OOS', 'DAMAGED', 'NOT_FOUND', 'SUB_OFFERED'];
 
-        let subtotal = 0;
+app.post('/api/bopis/finalize/:id', async (req, res) => {
+    const shortReasons = req.body && req.body.short_reasons && typeof req.body.short_reasons === 'object' ? req.body.short_reasons : {};
+    for (const v of Object.values(shortReasons)) {
+        if (!BOPIS_SHORT_REASONS.includes(v)) {
+            return res.status(400).json({ success: false, message: `Invalid short_reason '${v}'.` });
+        }
+    }
+    let order, items, subtotal, tax, total;
+    const conn = await req.pool.getConnection();
+    try {
+        const [orderRows] = await conn.query('SELECT * FROM online_orders WHERE id = ?', [req.params.id]);
+        if (orderRows.length === 0) return res.status(404).json({ success: false, message: 'Order not found.' });
+        order = orderRows[0];
+        [items] = await conn.query('SELECT * FROM online_order_items WHERE order_id = ?', [req.params.id]);
+
+        const shortItems = items.filter(it => it.qty_picked < it.qty_ordered);
+        const missing = shortItems.filter(it => !shortReasons[it.sku]).map(it => it.sku);
+        if (shortItems.length > 0 && missing.length > 0) {
+            return res.status(400).json({ success: false, message: `Short-pick reason required for: ${missing.join(', ')}.`, missing_skus: missing });
+        }
+
+        subtotal = 0;
         for (const item of items) {
             subtotal += item.qty_picked * item.price;
         }
-        const tax = subtotal * 0.055; 
-        const total = subtotal + tax;
+        tax = subtotal * 0.055;
+        total = subtotal + tax;
 
-        if (!order.is_mock) {
-            for (const item of items) {
-                if (item.qty_picked > 0) {
-                    await req.pool.query('UPDATE inventory SET quantity = quantity - ? WHERE sku = ?', [item.qty_picked, item.sku]);
+        await conn.beginTransaction();
+        try {
+            for (const sku of Object.keys(shortReasons)) {
+                await conn.query('UPDATE online_order_items SET short_reason = ? WHERE order_id = ? AND sku = ?', [shortReasons[sku], req.params.id, sku]);
+            }
+            if (!order.is_mock) {
+                for (const item of items) {
+                    if (item.qty_picked > 0) {
+                        await conn.query('UPDATE inventory SET quantity = quantity - ? WHERE sku = ?', [item.qty_picked, item.sku]);
+                    }
                 }
+            }
+            await conn.query('UPDATE online_orders SET status = "COMPLETED", subtotal = ?, tax = ?, total = ? WHERE id = ?', [subtotal, tax, total, req.params.id]);
+            await conn.commit();
+        } catch (txErr) {
+            await conn.rollback();
+            throw txErr;
+        }
+    } catch (err) {
+        conn.release();
+        return res.status(500).json({ success: false, message: err.message });
+    }
+    conn.release();
+
+    try {
+        const dateStr = new Date().toLocaleString();
+        let receiptData = Buffer.concat([
+            ESC.INIT, ESC.CENTER, ESC.BOLD_ON,
+            Buffer.from("DOLLAR GENERAL STORE #14302\n"),
+            Buffer.from("216 BELKNAP ST\nSUPERIOR, WI 54880\n"),
+            Buffer.from(order.is_mock ? "TEST ORDER - NO INV IMPACT\n" : "ONLINE PICKUP RECEIPT\n"),
+            Buffer.from("\n"),
+            ESC.BOLD_OFF, ESC.LEFT,
+            Buffer.from(`CUSTOMER: ${order.customer_name}\n`),
+            Buffer.from(`ORDER ID: ${order.id}\n`),
+            Buffer.from(`DATE: ${dateStr}\n`),
+            Buffer.from("--------------------------------\n"),
+            Buffer.from("ITEMS PICKED:\n")
+        ]);
+
+        for (const item of items) {
+            if (item.qty_picked > 0) {
+                const priceNum = Number(item.price) || 0;
+                const itemLine = `${item.name.padEnd(20).substring(0, 20)} ${item.qty_picked}x $${priceNum.toFixed(2)}\n`;
+                receiptData = Buffer.concat([receiptData, Buffer.from(itemLine)]);
             }
         }
 
-        await req.pool.query('UPDATE online_orders SET status = "COMPLETED", subtotal = ?, tax = ?, total = ? WHERE id = ?', [subtotal, tax, total, req.params.id]);
+        receiptData = Buffer.concat([
+            receiptData,
+            Buffer.from("--------------------------------\n"),
+            ESC.RIGHT,
+            Buffer.from(`SUBTOTAL: $${subtotal.toFixed(2)}\n`),
+            Buffer.from(`TAX (5.5%): $${tax.toFixed(2)}\n`),
+            ESC.BOLD_ON,
+            Buffer.from(`TOTAL: $${total.toFixed(2)}\n\n`),
+            ESC.BOLD_OFF, ESC.CENTER,
+            Buffer.from("THANK YOU FOR SHOPPING AT MYDG!\n"),
+            Buffer.from(order.is_mock ? "DCC TEST ORDER\n" : "PICKED VIA STORENET HHT\n"),
+            ESC.FEED_3, ESC.CUT
+        ]);
 
-        try {
-            const dateStr = new Date().toLocaleString();
-            let receiptData = Buffer.concat([
-                ESC.INIT, ESC.CENTER, ESC.BOLD_ON,
-                Buffer.from("DOLLAR GENERAL STORE #14302\n"),
-                Buffer.from("216 BELKNAP ST\nSUPERIOR, WI 54880\n"),
-                Buffer.from(order.is_mock ? "TEST ORDER - NO INV IMPACT\n" : "ONLINE PICKUP RECEIPT\n"),
-                Buffer.from("\n"),
-                ESC.BOLD_OFF, ESC.LEFT,
-                Buffer.from(`CUSTOMER: ${order.customer_name}\n`),
-                Buffer.from(`ORDER ID: ${order.id}\n`),
-                Buffer.from(`DATE: ${dateStr}\n`),
-                Buffer.from("--------------------------------\n"),
-                Buffer.from("ITEMS PICKED:\n")
-            ]);
+        await sendToPrinter(receiptData);
+    } catch (printErr) { console.error("Printing failed:", printErr.message); }
 
-            for (const item of items) {
-                if (item.qty_picked > 0) {
-                    const priceNum = Number(item.price) || 0;
-                    const itemLine = `${item.name.padEnd(20).substring(0, 20)} ${item.qty_picked}x $${priceNum.toFixed(2)}\n`;
-                    receiptData = Buffer.concat([receiptData, Buffer.from(itemLine)]);
-                }
-            }
-
-            receiptData = Buffer.concat([
-                receiptData,
-                Buffer.from("--------------------------------\n"),
-                ESC.RIGHT,
-                Buffer.from(`SUBTOTAL: $${subtotal.toFixed(2)}\n`),
-                Buffer.from(`TAX (5.5%): $${tax.toFixed(2)}\n`),
-                ESC.BOLD_ON,
-                Buffer.from(`TOTAL: $${total.toFixed(2)}\n\n`),
-                ESC.BOLD_OFF, ESC.CENTER,
-                Buffer.from("THANK YOU FOR SHOPPING AT MYDG!\n"),
-                Buffer.from(order.is_mock ? "DCC TEST ORDER\n" : "PICKED VIA STORENET HHT\n"),
-                ESC.FEED_3, ESC.CUT
-            ]);
-            
-            await sendToPrinter(receiptData);
-        } catch (printErr) { console.error("Printing failed:", printErr.message); }
-
-        res.json({ success: true, message: order.is_mock ? "Test order finalized (No inventory impact)." : "Order finalized and receipt printed.", subtotal, tax, total });
-    } catch (err) { res.status(500).json({ success: false, message: err.message }); }
+    res.json({ success: true, message: order.is_mock ? "Test order finalized (No inventory impact)." : "Order finalized and receipt printed.", subtotal, tax, total });
 });
 
 // --- SCHEDULE APIS ---
@@ -4857,6 +4998,208 @@ app.get('/api/vendors/:id/inventory', async (req, res) => {
     } catch (err) { res.status(500).json({ success: false, message: err.message }); }
 });
 
+// --- RECURRING TASKS ---
+// Checks every row in task_recurrence against today's date and materializes a row
+// in `tasks` if today matches the recurrence rule AND last_generated_date != today.
+// Returns number of tasks created for this store. Called hourly by the background loop
+// and on-demand by POST /api/task-recurrence/run-now (useful for tests).
+async function generateRecurringTasks(pool) {
+    const today = new Date();
+    const y = today.getFullYear(), m = today.getMonth() + 1, d = today.getDate();
+    const todayStr = `${y}-${String(m).padStart(2,'0')}-${String(d).padStart(2,'0')}`;
+    const daysInMonth = new Date(y, m, 0).getDate();
+    const dow = today.getDay();
+
+    const [rules] = await pool.query(
+        `SELECT * FROM task_recurrence WHERE active = 1 AND (last_generated_date IS NULL OR last_generated_date < ?)`,
+        [todayStr]
+    );
+    let created = 0;
+    for (const r of rules) {
+        let matches = false;
+        if (r.recurrence_type === 'DAILY') matches = true;
+        else if (r.recurrence_type === 'WEEKLY') matches = (r.day_of_week === dow);
+        else if (r.recurrence_type === 'MONTHLY') {
+            const target = Math.min(r.day_of_month || 1, daysInMonth);
+            matches = (d === target);
+        }
+        if (!matches) continue;
+        await pool.query(
+            'INSERT INTO tasks (title, description, due_date, priority, task_type) VALUES (?, ?, ?, ?, ?)',
+            [r.title, r.description || null, todayStr, r.priority || 'NORMAL', r.task_type || 'GENERAL']
+        );
+        await pool.query('UPDATE task_recurrence SET last_generated_date = ? WHERE id = ?', [todayStr, r.id]);
+        created++;
+    }
+    return created;
+}
+
+app.get('/api/task-recurrence', async (req, res) => {
+    try {
+        const [rows] = await req.pool.query('SELECT * FROM task_recurrence ORDER BY active DESC, title ASC');
+        res.json({ success: true, rules: rows });
+    } catch (err) { res.status(500).json({ success: false, message: err.message }); }
+});
+
+app.post('/api/task-recurrence', async (req, res) => {
+    const { title, description, priority, task_type, recurrence_type, day_of_week, day_of_month, active } = req.body || {};
+    if (!title || !recurrence_type) return res.status(400).json({ success: false, message: 'title and recurrence_type required.' });
+    if (!['DAILY','WEEKLY','MONTHLY'].includes(recurrence_type)) return res.status(400).json({ success: false, message: 'Invalid recurrence_type.' });
+    if (recurrence_type === 'WEEKLY' && (day_of_week == null || day_of_week < 0 || day_of_week > 6)) {
+        return res.status(400).json({ success: false, message: 'day_of_week (0-6) required for WEEKLY.' });
+    }
+    if (recurrence_type === 'MONTHLY' && (day_of_month == null || day_of_month < 1 || day_of_month > 31)) {
+        return res.status(400).json({ success: false, message: 'day_of_month (1-31) required for MONTHLY.' });
+    }
+    try {
+        const [r] = await req.pool.query(
+            `INSERT INTO task_recurrence (title, description, priority, task_type, recurrence_type, day_of_week, day_of_month, active)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+            [title, description || null, priority || 'NORMAL', task_type || 'GENERAL', recurrence_type,
+             recurrence_type === 'WEEKLY' ? day_of_week : null,
+             recurrence_type === 'MONTHLY' ? day_of_month : null,
+             active === false ? 0 : 1]
+        );
+        res.json({ success: true, id: r.insertId });
+    } catch (err) { res.status(500).json({ success: false, message: err.message }); }
+});
+
+// Run-now endpoint — triggers the generator for this store. Useful after creating a rule
+// that should fire today.
+app.post('/api/task-recurrence/run-now', async (req, res) => {
+    try {
+        const created = await generateRecurringTasks(req.pool);
+        res.json({ success: true, created });
+    } catch (err) { res.status(500).json({ success: false, message: err.message }); }
+});
+
+app.put('/api/task-recurrence/:id', async (req, res) => {
+    const { title, description, priority, task_type, recurrence_type, day_of_week, day_of_month, active } = req.body || {};
+    try {
+        await req.pool.query(
+            `UPDATE task_recurrence SET
+                title = COALESCE(?, title),
+                description = COALESCE(?, description),
+                priority = COALESCE(?, priority),
+                task_type = COALESCE(?, task_type),
+                recurrence_type = COALESCE(?, recurrence_type),
+                day_of_week = ?,
+                day_of_month = ?,
+                active = COALESCE(?, active)
+             WHERE id = ?`,
+            [title || null, description || null, priority || null, task_type || null, recurrence_type || null,
+             day_of_week ?? null, day_of_month ?? null,
+             active == null ? null : (active ? 1 : 0),
+             req.params.id]
+        );
+        res.json({ success: true });
+    } catch (err) { res.status(500).json({ success: false, message: err.message }); }
+});
+
+app.delete('/api/task-recurrence/:id', async (req, res) => {
+    try {
+        await req.pool.query('DELETE FROM task_recurrence WHERE id = ?', [req.params.id]);
+        res.json({ success: true });
+    } catch (err) { res.status(500).json({ success: false, message: err.message }); }
+});
+
+// --- VENDOR VISITS (check-in log) ---
+// List recent visits (optionally filter by vendor or active status).
+// Route order: /active before /:id so the static route isn't shadowed.
+app.get('/api/vendor-visits/active', async (req, res) => {
+    try {
+        const [rows] = await req.pool.query(
+            `SELECT * FROM vendor_visits WHERE checked_out_at IS NULL ORDER BY checked_in_at DESC`
+        );
+        const vendorIds = [...new Set(rows.map(r => r.vendor_id).filter(Boolean))];
+        let vendorMap = {};
+        if (vendorIds.length) {
+            const [vs] = await enterprisePool().query('SELECT id, code, name FROM vendors WHERE id IN (?)', [vendorIds]);
+            vendorMap = Object.fromEntries(vs.map(v => [v.id, v]));
+        }
+        res.json({ success: true, visits: rows.map(r => ({ ...r, vendor_code: vendorMap[r.vendor_id]?.code, vendor_name: vendorMap[r.vendor_id]?.name })) });
+    } catch (err) { res.status(500).json({ success: false, message: err.message }); }
+});
+
+app.get('/api/vendor-visits', async (req, res) => {
+    const vendorId = req.query.vendor_id ? Number(req.query.vendor_id) : null;
+    const limit = Math.min(200, Math.max(1, parseInt(req.query.limit) || 50));
+    try {
+        let where = '1=1';
+        const params = [];
+        if (vendorId) { where += ' AND vendor_id = ?'; params.push(vendorId); }
+        const [rows] = await req.pool.query(
+            `SELECT * FROM vendor_visits WHERE ${where} ORDER BY checked_in_at DESC LIMIT ?`,
+            [...params, limit]
+        );
+        const vendorIds = [...new Set(rows.map(r => r.vendor_id).filter(Boolean))];
+        let vendorMap = {};
+        if (vendorIds.length) {
+            const [vs] = await enterprisePool().query('SELECT id, code, name FROM vendors WHERE id IN (?)', [vendorIds]);
+            vendorMap = Object.fromEntries(vs.map(v => [v.id, v]));
+        }
+        res.json({ success: true, visits: rows.map(r => ({ ...r, vendor_code: vendorMap[r.vendor_id]?.code, vendor_name: vendorMap[r.vendor_id]?.name })) });
+    } catch (err) { res.status(500).json({ success: false, message: err.message }); }
+});
+
+// Detail view — includes activity (returns/orders/deliveries) touched during the visit window.
+app.get('/api/vendor-visits/:id', async (req, res) => {
+    try {
+        const [rows] = await req.pool.query('SELECT * FROM vendor_visits WHERE id = ?', [req.params.id]);
+        if (rows.length === 0) return res.status(404).json({ success: false, message: 'Visit not found.' });
+        const visit = rows[0];
+        const endAt = visit.checked_out_at || new Date();
+        const [[vendor]] = await enterprisePool().query('SELECT id, code, name FROM vendors WHERE id = ?', [visit.vendor_id]);
+        const [returns] = await req.pool.query(
+            `SELECT id, status, credit_memo_number, created_at FROM vendor_returns
+             WHERE vendor_id = ? AND created_at BETWEEN ? AND ?`,
+            [visit.vendor_id, visit.checked_in_at, endAt]);
+        const [orders] = await req.pool.query(
+            `SELECT id, status, po_number, created_at FROM vendor_orders
+             WHERE vendor_id = ? AND created_at BETWEEN ? AND ?`,
+            [visit.vendor_id, visit.checked_in_at, endAt]);
+        const [deliveries] = await req.pool.query(
+            `SELECT id, status, invoice_number, created_at FROM vendor_deliveries
+             WHERE vendor_id = ? AND created_at BETWEEN ? AND ?`,
+            [visit.vendor_id, visit.checked_in_at, endAt]);
+        res.json({ success: true, visit, vendor: vendor || null, activity: { returns, orders, deliveries } });
+    } catch (err) { res.status(500).json({ success: false, message: err.message }); }
+});
+
+// Check in a vendor rep. Body: { vendor_id, rep_name, eid, notes }.
+// Refuses if this vendor already has an active (un-checked-out) visit.
+app.post('/api/vendor-visits', async (req, res) => {
+    const { vendor_id, rep_name, eid, notes } = req.body || {};
+    if (!vendor_id) return res.status(400).json({ success: false, message: 'vendor_id required.' });
+    try {
+        const [active] = await req.pool.query(
+            'SELECT id FROM vendor_visits WHERE vendor_id = ? AND checked_out_at IS NULL LIMIT 1',
+            [vendor_id]);
+        if (active.length > 0) {
+            return res.status(409).json({ success: false, message: `Vendor already checked in (visit #${active[0].id}).`, visit_id: active[0].id });
+        }
+        const [r] = await req.pool.query(
+            'INSERT INTO vendor_visits (vendor_id, rep_name, checked_in_by_eid, notes) VALUES (?, ?, ?, ?)',
+            [vendor_id, rep_name || null, eid || null, notes || null]);
+        res.json({ success: true, id: r.insertId });
+    } catch (err) { res.status(500).json({ success: false, message: err.message }); }
+});
+
+// Check out an active vendor visit.
+app.post('/api/vendor-visits/:id/checkout', async (req, res) => {
+    const { notes } = req.body || {};
+    try {
+        const [rows] = await req.pool.query('SELECT checked_out_at, notes FROM vendor_visits WHERE id = ?', [req.params.id]);
+        if (rows.length === 0) return res.status(404).json({ success: false, message: 'Visit not found.' });
+        if (rows[0].checked_out_at) return res.status(400).json({ success: false, message: 'Visit already checked out.' });
+        const mergedNotes = notes ? (rows[0].notes ? `${rows[0].notes}\n${notes}` : notes) : rows[0].notes;
+        await req.pool.query(
+            'UPDATE vendor_visits SET checked_out_at = CURRENT_TIMESTAMP, notes = ? WHERE id = ?',
+            [mergedNotes, req.params.id]);
+        res.json({ success: true });
+    } catch (err) { res.status(500).json({ success: false, message: err.message }); }
+});
+
 // --- DG RESPOND ENTRY PAGE ---
 app.get('/respond', (req, res) => {
     if (!req.session.userId) return res.redirect('/');
@@ -4883,6 +5226,21 @@ app.get('/respond', (req, res) => {
             } catch (e) { console.error('[Auto-Reorder] Failed to fetch stores:', e.message); }
         }, 15 * 60 * 1000);
         console.log("[Auto-Reorder] Background check enabled (every 15 min).");
+
+        // Recurring task generator — hourly. Idempotent per (rule, date).
+        setInterval(async () => {
+            try {
+                const [stores] = await enterprisePool().query('SELECT id FROM stores');
+                for (const store of stores) {
+                    try {
+                        const pool = await getStorePool(store.id);
+                        const created = await generateRecurringTasks(pool);
+                        if (created > 0) console.log(`[Recurring Tasks] Store ${store.id}: ${created} new task(s)`);
+                    } catch (e) { console.error(`[Recurring Tasks] Store ${store.id} error:`, e.message); }
+                }
+            } catch (e) { console.error('[Recurring Tasks] Failed to fetch stores:', e.message); }
+        }, 60 * 60 * 1000);
+        console.log("[Recurring Tasks] Background generator enabled (hourly).");
 
     } catch (e) { console.error("Initialization failed:", e.message); }
 })();
