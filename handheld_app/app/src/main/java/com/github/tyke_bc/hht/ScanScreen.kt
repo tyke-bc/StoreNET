@@ -82,6 +82,7 @@ fun ScanScreen(storeId: String, onBackToLauncher: () -> Unit) {
     var tasksList by remember { mutableStateOf<List<com.github.tyke_bc.hht.network.Task>>(emptyList()) }
     var tasksLoading by remember { mutableStateOf(false) }
     var tasksError by remember { mutableStateOf<String?>(null) }
+    var openResetTasks by remember { mutableStateOf<List<com.github.tyke_bc.hht.network.ResetTaskSummary>>(emptyList()) }
 
     // POG Reset Scan State
     var resetStatusMessage by remember { mutableStateOf<String?>(null) }
@@ -375,6 +376,7 @@ fun ScanScreen(storeId: String, onBackToLauncher: () -> Unit) {
         // Keep the Home banner count fresh whenever user lands on Home.
         if (selectedScreen == "Home") {
             try { tasksList = RetrofitClient.instance.getTasks(storeId) } catch (_: Exception) {}
+            try { openResetTasks = RetrofitClient.instance.getResetTasks(storeId, "OPEN", 25).tasks ?: emptyList() } catch (_: Exception) {}
         }
         if (selectedScreen == "Home" && selectedTab == 5) {
             coroutineScope.launch {
@@ -469,6 +471,37 @@ fun ScanScreen(storeId: String, onBackToLauncher: () -> Unit) {
                                             }
                                         }
                                         Text("View Tasks ›", color = Color.White, fontWeight = FontWeight.SemiBold, fontSize = 13.sp)
+                                    }
+                                }
+                            }
+                            // In-progress reset cards — any reset task with partial scans gets surfaced
+                            // so the employee can see what still needs the tag scan.
+                            val inProgressResets = openResetTasks.filter { it.pogDone > 0 && it.pogDone < it.pogTotal }
+                            if (inProgressResets.isNotEmpty()) {
+                                Column(modifier = Modifier.fillMaxWidth().background(Color(0xFFF5F3FF)).padding(horizontal = 8.dp, vertical = 6.dp)) {
+                                    Text("In-progress resets", fontSize = 11.sp, color = Color(0xFF6D28D9), fontWeight = FontWeight.Bold, modifier = Modifier.padding(horizontal = 4.dp, vertical = 2.dp))
+                                    inProgressResets.forEach { r ->
+                                        Surface(
+                                            color = Color.White,
+                                            shape = RoundedCornerShape(6.dp),
+                                            border = BorderStroke(1.dp, Color(0xFF8B5CF6)),
+                                            modifier = Modifier.fillMaxWidth().padding(vertical = 2.dp).clickable { selectedScreen = "Tasks" }
+                                        ) {
+                                            Row(modifier = Modifier.fillMaxWidth().padding(horizontal = 10.dp, vertical = 6.dp), verticalAlignment = Alignment.CenterVertically) {
+                                                Column(modifier = Modifier.weight(1f)) {
+                                                    Text(r.title, fontSize = 13.sp, fontWeight = FontWeight.SemiBold, color = Color(0xFF4C1D95))
+                                                    val lastLine = buildString {
+                                                        if (!r.lastScanBy.isNullOrBlank()) append("Last: ").append(r.lastScanBy)
+                                                        if (!r.lastScanAt.isNullOrBlank()) {
+                                                            if (isNotEmpty()) append(" · ")
+                                                            append(r.lastScanAt.take(16).replace('T', ' '))
+                                                        }
+                                                    }
+                                                    if (lastLine.isNotEmpty()) Text(lastLine, fontSize = 10.sp, color = Color.Gray)
+                                                }
+                                                Text("${r.pogDone}/${r.pogTotal}", fontWeight = FontWeight.Bold, fontSize = 15.sp, color = Color(0xFF6D28D9))
+                                            }
+                                        }
                                     }
                                 }
                             }
@@ -588,12 +621,16 @@ fun ScanScreen(storeId: String, onBackToLauncher: () -> Unit) {
                                     }
                                 },
                                 onBackToList = { selectedOrder = null; orderItems = emptyList(); pickingError = null },
-                                onFinalize = {
+                                onFinalize = { shortReasons ->
                                     coroutineScope.launch {
                                         isPickingLoading = true
                                         pickingError = null
                                         try {
-                                            val res = RetrofitClient.instance.finalizeOrder(storeId, selectedOrder!!.id)
+                                            val res = RetrofitClient.instance.finalizeOrder(
+                                                storeId,
+                                                selectedOrder!!.id,
+                                                com.github.tyke_bc.hht.network.FinalizeOrderRequest(shortReasons = if (shortReasons.isEmpty()) null else shortReasons)
+                                            )
                                             if (res.success) {
                                                 selectedOrder = null
                                                 orderItems = emptyList()
@@ -2052,7 +2089,7 @@ fun PickingContent(
     errorMessage: String? = null,
     onOrderSelected: (com.github.tyke_bc.hht.network.OnlineOrder) -> Unit,
     onBackToList: () -> Unit,
-    onFinalize: () -> Unit
+    onFinalize: (Map<String, String>) -> Unit
 ) {
     if (isLoading) {
         Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
@@ -2102,10 +2139,51 @@ fun PickingDetailContent(
     order: com.github.tyke_bc.hht.network.OnlineOrder,
     items: List<com.github.tyke_bc.hht.network.OnlineOrderItem>,
     onBack: () -> Unit,
-    onFinalize: () -> Unit
+    onFinalize: (Map<String, String>) -> Unit
 ) {
     val anyPicked = items.any { it.qtyPicked > 0 }
     val allPicked = items.all { it.qtyPicked >= it.qtyOrdered }
+    val shortItems = remember(items) { items.filter { it.qtyPicked < it.qtyOrdered } }
+    var showShortDialog by remember { mutableStateOf(false) }
+    val shortReasons = remember { mutableStateMapOf<String, String>() }
+
+    if (showShortDialog && shortItems.isNotEmpty()) {
+        val reasonOptions = listOf(
+            "OOS" to "Out of stock",
+            "DAMAGED" to "Damaged",
+            "NOT_FOUND" to "Couldn't find",
+            "SUB_OFFERED" to "Substitution offered"
+        )
+        AlertDialog(
+            onDismissRequest = { showShortDialog = false },
+            title = { Text("Short-pick reasons", fontWeight = FontWeight.Bold) },
+            text = {
+                Column(modifier = Modifier.verticalScroll(rememberScrollState())) {
+                    Text("Pick a reason for each short-picked item.", fontSize = 13.sp, color = Color.Gray)
+                    Spacer(modifier = Modifier.height(8.dp))
+                    shortItems.forEach { item ->
+                        Text("${item.name} (${item.qtyPicked}/${item.qtyOrdered})", fontWeight = FontWeight.SemiBold, fontSize = 13.sp)
+                        Column(modifier = Modifier.padding(start = 8.dp, bottom = 8.dp)) {
+                            reasonOptions.forEach { (code, label) ->
+                                Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.clickable { shortReasons[item.sku] = code }.padding(vertical = 2.dp)) {
+                                    RadioButton(selected = shortReasons[item.sku] == code, onClick = { shortReasons[item.sku] = code })
+                                    Text(label, fontSize = 13.sp)
+                                }
+                            }
+                        }
+                    }
+                }
+            },
+            confirmButton = {
+                val allChosen = shortItems.all { shortReasons[it.sku] != null }
+                Button(onClick = {
+                    showShortDialog = false
+                    onFinalize(shortReasons.toMap())
+                }, enabled = allChosen) { Text("FINALIZE") }
+            },
+            dismissButton = { TextButton(onClick = { showShortDialog = false }) { Text("CANCEL") } }
+        )
+    }
 
     // Calculate current running subtotal based on picked items
     var currentSubtotal = 0.0
@@ -2200,9 +2278,12 @@ fun PickingDetailContent(
         Spacer(modifier = Modifier.height(8.dp))
 
         Button(
-            onClick = onFinalize,
+            onClick = {
+                if (shortItems.isEmpty()) onFinalize(emptyMap())
+                else showShortDialog = true
+            },
             modifier = Modifier.fillMaxWidth().height(60.dp),
-            enabled = anyPicked, // Allow partial finalization if needed, or stick to allPicked
+            enabled = anyPicked,
             colors = ButtonDefaults.buttonColors(containerColor = if (allPicked) Color(0xFF10B981) else if (anyPicked) Color(0xFFF59E0B) else Color.Gray)
         ) {
             Text(if (allPicked) "FINALIZE & PRINT RECEIPT" else "FINALIZE PARTIAL ORDER", fontWeight = FontWeight.Bold, fontSize = 16.sp)

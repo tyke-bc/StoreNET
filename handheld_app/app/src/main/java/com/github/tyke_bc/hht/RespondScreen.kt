@@ -73,6 +73,10 @@ fun RespondScreen(storeId: String, onBack: () -> Unit) {
     var addNotes by remember { mutableStateOf("") }
     var submitting by remember { mutableStateOf(false) }
 
+    // Active visit (per vendor). Set when a rep is checked in; cleared on checkout.
+    var activeVisit by remember { mutableStateOf<VendorVisit?>(null) }
+    var checkInBusy by remember { mutableStateOf(false) }
+
     // Toast
     var toast by remember { mutableStateOf<String?>(null) }
     var toastOk by remember { mutableStateOf(true) }
@@ -111,6 +115,16 @@ fun RespondScreen(storeId: String, onBack: () -> Unit) {
 
     LaunchedEffect(Unit) { loadLanding() }
     LaunchedEffect(selectedVendor, view) { if (view == "vendor") loadVendorInv() }
+
+    // When a vendor is picked, look up any currently-active visit for them so the hub
+    // shows a checked-in badge instead of offering check-in twice.
+    LaunchedEffect(selectedVendor) {
+        val v = selectedVendor
+        if (v == null) { activeVisit = null; return@LaunchedEffect }
+        activeVisit = try {
+            RetrofitClient.instance.getActiveVendorVisits(storeId).visits?.firstOrNull { it.vendorId == v.id }
+        } catch (_: Exception) { null }
+    }
 
     // Scan listener — routes scans to the active view
     LaunchedEffect(view) {
@@ -190,6 +204,34 @@ fun RespondScreen(storeId: String, onBack: () -> Unit) {
                     repName = repName,
                     onRepName = { repName = it },
                     vendorInv = vendorInv,
+                    activeVisit = activeVisit,
+                    checkInBusy = checkInBusy,
+                    onCheckIn = {
+                        scope.launch {
+                            checkInBusy = true
+                            try {
+                                val r = RetrofitClient.instance.checkInVendor(storeId,
+                                    VendorCheckInRequest(selectedVendor!!.id, repName.ifBlank { null }, MainActivity.loggedInEid.ifBlank { null }))
+                                if (r.success && r.id != null) {
+                                    activeVisit = RetrofitClient.instance.getActiveVendorVisits(storeId).visits?.firstOrNull { it.id == r.id }
+                                    showToast("Checked in")
+                                } else showToast(r.message ?: "Check-in failed", false)
+                            } catch (e: Exception) { showToast(e.message ?: "Error", false) }
+                            finally { checkInBusy = false }
+                        }
+                    },
+                    onCheckOut = {
+                        val v = activeVisit ?: return@VendorHubView
+                        scope.launch {
+                            checkInBusy = true
+                            try {
+                                val r = RetrofitClient.instance.checkOutVendor(storeId, v.id)
+                                if (r.success) { activeVisit = null; showToast("Checked out") }
+                                else showToast(r.message ?: "Checkout failed", false)
+                            } catch (e: Exception) { showToast(e.message ?: "Error", false) }
+                            finally { checkInBusy = false }
+                        }
+                    },
                     onStartReturn = {
                         scope.launch {
                             try {
@@ -477,6 +519,10 @@ private fun VendorHubView(
     repName: String,
     onRepName: (String) -> Unit,
     vendorInv: List<VendorInventoryRow>,
+    activeVisit: VendorVisit?,
+    checkInBusy: Boolean,
+    onCheckIn: () -> Unit,
+    onCheckOut: () -> Unit,
     onStartReturn: () -> Unit,
     onStartOrder: () -> Unit,
     modifier: Modifier = Modifier
@@ -496,6 +542,40 @@ private fun VendorHubView(
         Text("Vendor rep on site (optional)", fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
         BasicTextField(value = repName, onValueChange = onRepName,
             modifier = Modifier.fillMaxWidth().height(40.dp).border(1.dp, Color.Gray).padding(8.dp))
+
+        Spacer(Modifier.height(10.dp))
+        // Check-in card — creates a vendor_visits row so manager has a log of who showed up when.
+        Surface(
+            color = if (activeVisit != null) Color(0xFFDCFCE7) else Color.White,
+            border = BorderStroke(1.dp, if (activeVisit != null) Color(0xFF16A34A) else SlateBorder),
+            shape = RoundedCornerShape(8.dp),
+            modifier = Modifier.fillMaxWidth()
+        ) {
+            Row(Modifier.padding(10.dp), verticalAlignment = Alignment.CenterVertically) {
+                Column(Modifier.weight(1f)) {
+                    if (activeVisit != null) {
+                        Text("CHECKED IN", fontSize = 11.sp, fontWeight = FontWeight.Bold, color = Color(0xFF166534))
+                        val who = activeVisit.repName?.takeIf { it.isNotBlank() } ?: "(no rep name)"
+                        val at = activeVisit.checkedInAt?.take(16)?.replace('T', ' ') ?: ""
+                        Text("$who · $at", fontSize = 12.sp)
+                    } else {
+                        Text("Not checked in", fontSize = 12.sp, color = TextMuted)
+                        Text("Log this rep's visit for the store record.", fontSize = 10.sp, color = TextMuted)
+                    }
+                }
+                if (activeVisit != null) {
+                    Button(onClick = onCheckOut, enabled = !checkInBusy,
+                        colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF059669))) {
+                        Text("CHECK OUT", fontSize = 11.sp)
+                    }
+                } else {
+                    Button(onClick = onCheckIn, enabled = !checkInBusy,
+                        colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF0EA5E9))) {
+                        Text("CHECK IN", fontSize = 11.sp)
+                    }
+                }
+            }
+        }
 
         Spacer(Modifier.height(14.dp))
         Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
