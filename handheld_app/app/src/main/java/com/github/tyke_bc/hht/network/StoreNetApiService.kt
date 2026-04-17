@@ -2,6 +2,7 @@ package com.github.tyke_bc.hht.network
 
 import com.google.gson.annotations.SerializedName
 import retrofit2.http.Body
+import retrofit2.http.DELETE
 import retrofit2.http.GET
 import retrofit2.http.Header
 import retrofit2.http.POST
@@ -244,6 +245,12 @@ interface StoreNetApiService {
         @Path("section") section: String
     ): CycleCountSectionResponse
 
+    @GET("api/cyclecount/resolve/{barcode}")
+    suspend fun resolveCycleBarcode(
+        @Header("X-Store-ID") storeId: String,
+        @Path("barcode", encoded = true) barcode: String
+    ): CycleCountSectionResponse
+
     @POST("api/cyclecount/submit")
     suspend fun submitCycleCount(
         @Header("X-Store-ID") storeId: String,
@@ -265,7 +272,551 @@ interface StoreNetApiService {
         @Path("id") id: Int,
         @Body request: UpdateTaskRequest
     ): GenericResponse
+
+    @POST("api/pogs/reset/scan")
+    suspend fun scanResetTag(
+        @Header("X-Store-ID") storeId: String,
+        @Body request: ResetScanRequest
+    ): ResetScanResponse
+
+    @POST("api/pogs/reset/reprint/{taskId}")
+    suspend fun reprintResetSignoff(
+        @Header("X-Store-ID") storeId: String,
+        @Path("taskId") taskId: Int
+    ): GenericResponse
+
+    @GET("api/inventory/sales/{upcOrSku}")
+    suspend fun getSalesHistory(
+        @Header("X-Store-ID") storeId: String,
+        @Path(value = "upcOrSku", encoded = true) upcOrSku: String
+    ): SalesHistoryResponse
+
+    @POST("api/inventory/adjust")
+    suspend fun submitAdjustment(
+        @Header("X-Store-ID") storeId: String,
+        @Body request: AdjustmentRequest
+    ): AdjustmentResponse
+
+    @POST("api/compliance/submit")
+    suspend fun submitCompliance(
+        @Header("X-Store-ID") storeId: String,
+        @Body request: ComplianceRequest
+    ): GenericResponse
+
+    @POST("api/inventory/transfer/request")
+    suspend fun requestTransfer(
+        @Header("X-Store-ID") storeId: String,
+        @Body request: TransferRequest
+    ): GenericResponse
+
+    @GET("api/reports/movers")
+    suspend fun getMovers(
+        @Header("X-Store-ID") storeId: String,
+        @retrofit2.http.Query("days") days: Int
+    ): MoversResponse
+
+    @GET("api/review/pending")
+    suspend fun getReviewPending(
+        @Header("X-Store-ID") storeId: String,
+        @retrofit2.http.Query("days") days: Int
+    ): ReviewResponse
+
+    // PRP Returns
+    @GET("api/prp/batches")
+    suspend fun getPrpBatches(@Header("X-Store-ID") storeId: String): List<PrpBatch>
+
+    @GET("api/prp/batches/{id}")
+    suspend fun getPrpBatch(
+        @Header("X-Store-ID") storeId: String,
+        @Path("id") id: Int
+    ): PrpBatchDetailResponse
+
+    @POST("api/prp/batches")
+    suspend fun createPrpBatch(
+        @Header("X-Store-ID") storeId: String,
+        @Body request: CreatePrpBatchRequest
+    ): CreatePrpBatchResponse
+
+    @POST("api/prp/batches/{id}/item")
+    suspend fun addPrpItem(
+        @Header("X-Store-ID") storeId: String,
+        @Path("id") id: Int,
+        @Body request: AddPrpItemRequest
+    ): AddPrpItemResponse
+
+    @DELETE("api/prp/batches/{id}/item/{itemId}")
+    suspend fun removePrpItem(
+        @Header("X-Store-ID") storeId: String,
+        @Path("id") id: Int,
+        @Path("itemId") itemId: Int
+    ): GenericResponse
+
+    @POST("api/prp/batches/{id}/close")
+    suspend fun closePrpBatch(
+        @Header("X-Store-ID") storeId: String,
+        @Path("id") id: Int,
+        @Body request: ClosePrpBatchRequest
+    ): GenericResponse
+
+    @POST("api/prp/batches/{id}/ship")
+    suspend fun shipPrpBatch(
+        @Header("X-Store-ID") storeId: String,
+        @Path("id") id: Int,
+        @Body request: ShipPrpBatchRequest
+    ): GenericResponse
+
+    @POST("api/prp/batches/{id}/print")
+    suspend fun printPrpManifest(
+        @Header("X-Store-ID") storeId: String,
+        @Path("id") id: Int,
+        @Body request: EmptyRequest = EmptyRequest()
+    ): GenericResponse
+
+    // Vendors (enterprise — no store header needed but harmless)
+    @GET("api/vendors")
+    suspend fun getVendors(): List<Vendor>
+
+    // Vendor Deliveries (per-store — HHT receives what vendor drops off)
+    @GET("api/vendor-deliveries")
+    suspend fun getVendorDeliveries(@Header("X-Store-ID") storeId: String): List<VendorDelivery>
+
+    @GET("api/vendor-deliveries/{id}")
+    suspend fun getVendorDelivery(
+        @Header("X-Store-ID") storeId: String,
+        @Path("id") id: Int
+    ): VendorDeliveryDetailResponse
+
+    @POST("api/vendor-deliveries")
+    suspend fun createVendorDelivery(
+        @Header("X-Store-ID") storeId: String,
+        @Body request: CreateVendorDeliveryRequest
+    ): CreateVendorDeliveryResponse
+
+    @POST("api/vendor-deliveries/{id}/scan")
+    suspend fun scanVendorDelivery(
+        @Header("X-Store-ID") storeId: String,
+        @Path("id") id: Int,
+        @Body request: VendorDeliveryScanRequest
+    ): VendorDeliveryScanResponse
+
+    @POST("api/vendor-deliveries/{id}/complete")
+    suspend fun completeVendorDelivery(
+        @Header("X-Store-ID") storeId: String,
+        @Path("id") id: Int,
+        @Body request: EmptyRequest = EmptyRequest()
+    ): GenericResponse
+
+    // Vendor inventory (per-store list of SKUs tagged to a vendor, for DG Respond low-stock browsing)
+    @GET("api/vendors/{id}/inventory")
+    suspend fun getVendorInventory(
+        @Header("X-Store-ID") storeId: String,
+        @Path("id") vendorId: Int
+    ): List<VendorInventoryRow>
+
+    // Resolve "VO-123" or "123" scanned on a DSD order sheet → SUBMITTED order + items
+    @GET("api/vendor-orders/resolve/{code}")
+    suspend fun resolveVendorOrder(
+        @Header("X-Store-ID") storeId: String,
+        @Path("code") code: String
+    ): ResolveVendorOrderResponse
+
+    // Vendor Returns (DG Respond)
+    @GET("api/vendor-returns")
+    suspend fun getVendorReturns(@Header("X-Store-ID") storeId: String): List<VendorReturn>
+
+    @GET("api/vendor-returns/{id}")
+    suspend fun getVendorReturn(
+        @Header("X-Store-ID") storeId: String,
+        @Path("id") id: Int
+    ): VendorReturnDetailResponse
+
+    @POST("api/vendor-returns")
+    suspend fun createVendorReturn(
+        @Header("X-Store-ID") storeId: String,
+        @Body request: CreateVendorReturnRequest
+    ): CreateIdResponse
+
+    @POST("api/vendor-returns/{id}/item")
+    suspend fun addVendorReturnItem(
+        @Header("X-Store-ID") storeId: String,
+        @Path("id") id: Int,
+        @Body request: AddVendorReturnItemRequest
+    ): AddVendorReturnItemResponse
+
+    @DELETE("api/vendor-returns/{id}/item/{itemId}")
+    suspend fun removeVendorReturnItem(
+        @Header("X-Store-ID") storeId: String,
+        @Path("id") id: Int,
+        @Path("itemId") itemId: Int
+    ): GenericResponse
+
+    @POST("api/vendor-returns/{id}/close")
+    suspend fun closeVendorReturn(
+        @Header("X-Store-ID") storeId: String,
+        @Path("id") id: Int,
+        @Body request: CloseVendorReturnRequest
+    ): GenericResponse
+
+    @POST("api/vendor-returns/{id}/print")
+    suspend fun printVendorReturn(
+        @Header("X-Store-ID") storeId: String,
+        @Path("id") id: Int,
+        @Body request: EmptyRequest = EmptyRequest()
+    ): GenericResponse
+
+    // Vendor Orders (DG Respond)
+    @GET("api/vendor-orders")
+    suspend fun getVendorOrders(@Header("X-Store-ID") storeId: String): List<VendorOrder>
+
+    @GET("api/vendor-orders/{id}")
+    suspend fun getVendorOrder(
+        @Header("X-Store-ID") storeId: String,
+        @Path("id") id: Int
+    ): VendorOrderDetailResponse
+
+    @POST("api/vendor-orders")
+    suspend fun createVendorOrder(
+        @Header("X-Store-ID") storeId: String,
+        @Body request: CreateVendorOrderRequest
+    ): CreateIdResponse
+
+    @POST("api/vendor-orders/{id}/item")
+    suspend fun addVendorOrderItem(
+        @Header("X-Store-ID") storeId: String,
+        @Path("id") id: Int,
+        @Body request: AddVendorOrderItemRequest
+    ): AddVendorOrderItemResponse
+
+    @DELETE("api/vendor-orders/{id}/item/{itemId}")
+    suspend fun removeVendorOrderItem(
+        @Header("X-Store-ID") storeId: String,
+        @Path("id") id: Int,
+        @Path("itemId") itemId: Int
+    ): GenericResponse
+
+    @POST("api/vendor-orders/{id}/submit")
+    suspend fun submitVendorOrder(
+        @Header("X-Store-ID") storeId: String,
+        @Path("id") id: Int,
+        @Body request: SubmitVendorOrderRequest
+    ): GenericResponse
+
+    @POST("api/vendor-orders/{id}/print")
+    suspend fun printVendorOrder(
+        @Header("X-Store-ID") storeId: String,
+        @Path("id") id: Int,
+        @Body request: EmptyRequest = EmptyRequest()
+    ): GenericResponse
 }
+
+data class ResolveVendorOrderResponse(
+    val success: Boolean,
+    val order: VendorOrder?,
+    val vendor: Vendor?,
+    val items: List<VendorOrderItem>?,
+    @SerializedName("existing_delivery_id") val existingDeliveryId: Int?,
+    val message: String? = null
+)
+
+// --- Vendor-inventory row ---
+data class VendorInventoryRow(
+    val sku: String,
+    val name: String?,
+    val quantity: Int,
+    @SerializedName("reorder_min") val reorderMin: Int?,
+    @SerializedName("reorder_max") val reorderMax: Int?,
+    val price: Double?
+)
+
+// --- Vendor Return DTOs ---
+data class VendorReturn(
+    val id: Int,
+    @SerializedName("vendor_id") val vendorId: Int,
+    @SerializedName("vendor_code") val vendorCode: String?,
+    @SerializedName("vendor_name") val vendorName: String?,
+    val status: String,
+    @SerializedName("rep_name") val repName: String?,
+    @SerializedName("credit_memo_number") val creditMemoNumber: String?,
+    val notes: String?,
+    @SerializedName("opened_by_eid") val openedByEid: String?,
+    @SerializedName("closed_by_eid") val closedByEid: String?,
+    @SerializedName("created_at") val createdAt: String?,
+    @SerializedName("closed_at") val closedAt: String?,
+    @SerializedName("item_count") val itemCount: Int? = 0,
+    @SerializedName("unit_count") val unitCount: Int? = 0
+)
+
+data class VendorReturnItem(
+    val id: Int,
+    @SerializedName("return_id") val returnId: Int,
+    val sku: String,
+    val name: String?,
+    val quantity: Int,
+    @SerializedName("reason_code") val reasonCode: String,
+    val notes: String?,
+    @SerializedName("scanned_by_eid") val scannedByEid: String?,
+    @SerializedName("scanned_at") val scannedAt: String?
+)
+
+data class VendorReturnDetailResponse(
+    val success: Boolean,
+    @SerializedName("return") val returnRecord: VendorReturn?,
+    val vendor: Vendor?,
+    val items: List<VendorReturnItem>?,
+    val message: String? = null
+)
+
+data class CreateVendorReturnRequest(
+    @SerializedName("vendor_id") val vendorId: Int,
+    @SerializedName("rep_name") val repName: String?,
+    val notes: String?,
+    @SerializedName("credit_memo_number") val creditMemoNumber: String?,
+    val eid: String?
+)
+
+data class AddVendorReturnItemRequest(
+    val sku: String,
+    val quantity: Int,
+    @SerializedName("reason_code") val reasonCode: String,
+    val notes: String?,
+    val eid: String?
+)
+
+data class AddVendorReturnItemResponse(
+    val success: Boolean,
+    val id: Int?,
+    val sku: String?,
+    val name: String?,
+    @SerializedName("new_quantity") val newQuantity: Int?,
+    val message: String?
+)
+
+data class CloseVendorReturnRequest(
+    val eid: String?,
+    @SerializedName("credit_memo_number") val creditMemoNumber: String?
+)
+
+// --- Vendor Order DTOs ---
+data class VendorOrder(
+    val id: Int,
+    @SerializedName("vendor_id") val vendorId: Int,
+    @SerializedName("vendor_code") val vendorCode: String?,
+    @SerializedName("vendor_name") val vendorName: String?,
+    val status: String,
+    @SerializedName("rep_name") val repName: String?,
+    val notes: String?,
+    @SerializedName("created_at") val createdAt: String?,
+    @SerializedName("submitted_at") val submittedAt: String?,
+    @SerializedName("line_count") val lineCount: Int? = 0,
+    @SerializedName("unit_count") val unitCount: Int? = 0
+)
+
+data class VendorOrderItem(
+    val id: Int,
+    @SerializedName("order_id") val orderId: Int,
+    val sku: String,
+    val name: String?,
+    @SerializedName("quantity_requested") val quantityRequested: Int,
+    val notes: String?,
+    @SerializedName("on_hand") val onHand: Int?,
+    @SerializedName("reorder_min") val reorderMin: Int?,
+    @SerializedName("reorder_max") val reorderMax: Int?,
+    @SerializedName("created_at") val createdAt: String?
+)
+
+data class VendorOrderDetailResponse(
+    val success: Boolean,
+    val order: VendorOrder?,
+    val vendor: Vendor?,
+    val items: List<VendorOrderItem>?,
+    val message: String? = null
+)
+
+data class CreateVendorOrderRequest(
+    @SerializedName("vendor_id") val vendorId: Int,
+    @SerializedName("rep_name") val repName: String?,
+    val notes: String?,
+    val eid: String?
+)
+
+data class AddVendorOrderItemRequest(
+    val sku: String,
+    @SerializedName("quantity_requested") val quantityRequested: Int,
+    val notes: String?
+)
+
+data class AddVendorOrderItemResponse(
+    val success: Boolean,
+    val id: Int?,
+    val sku: String?,
+    val name: String?,
+    val message: String?
+)
+
+data class SubmitVendorOrderRequest(val eid: String?)
+
+data class CreateIdResponse(
+    val success: Boolean,
+    val id: Int?,
+    val message: String?
+)
+
+// --- Vendor DTOs ---
+data class Vendor(
+    val id: Int,
+    val code: String,
+    val name: String,
+    @SerializedName("contact_name") val contactName: String?,
+    @SerializedName("contact_phone") val contactPhone: String?,
+    @SerializedName("contact_email") val contactEmail: String?,
+    @SerializedName("delivery_schedule") val deliverySchedule: String?,
+    val notes: String?,
+    val active: Int,
+    @SerializedName("sku_count") val skuCount: Int? = 0
+)
+
+data class VendorDelivery(
+    val id: Int,
+    @SerializedName("vendor_id") val vendorId: Int,
+    @SerializedName("vendor_code") val vendorCode: String?,
+    @SerializedName("vendor_name") val vendorName: String?,
+    @SerializedName("order_id") val orderId: Int?,
+    val status: String,
+    @SerializedName("invoice_number") val invoiceNumber: String?,
+    @SerializedName("rep_name") val repName: String?,
+    val notes: String?,
+    @SerializedName("received_by_eid") val receivedByEid: String?,
+    @SerializedName("created_at") val createdAt: String?,
+    @SerializedName("completed_at") val completedAt: String?,
+    @SerializedName("line_count") val lineCount: Int? = 0,
+    @SerializedName("unit_count") val unitCount: Int? = 0
+)
+
+data class VendorDeliveryItem(
+    val id: Int,
+    @SerializedName("delivery_id") val deliveryId: Int,
+    val sku: String,
+    val name: String?,
+    @SerializedName("quantity_received") val quantityReceived: Int,
+    @SerializedName("scanned_by_eid") val scannedByEid: String?,
+    @SerializedName("scanned_at") val scannedAt: String?
+)
+
+data class VendorDeliveryDetailResponse(
+    val success: Boolean,
+    val delivery: VendorDelivery?,
+    val vendor: Vendor?,
+    val items: List<VendorDeliveryItem>?,
+    val message: String? = null
+)
+
+data class CreateVendorDeliveryRequest(
+    @SerializedName("vendor_id") val vendorId: Int,
+    @SerializedName("order_id") val orderId: Int? = null,
+    @SerializedName("rep_name") val repName: String?,
+    @SerializedName("invoice_number") val invoiceNumber: String?,
+    val notes: String?,
+    val eid: String?
+)
+
+data class CreateVendorDeliveryResponse(
+    val success: Boolean,
+    val id: Int?,
+    val message: String?
+)
+
+data class VendorDeliveryScanRequest(
+    val sku: String,
+    val quantity: Int,
+    val eid: String?
+)
+
+data class VendorDeliveryScanResponse(
+    val success: Boolean,
+    val id: Int?,
+    val sku: String?,
+    val name: String?,
+    @SerializedName("new_quantity") val newQuantity: Int?,
+    val message: String?
+)
+
+// --- PRP DTOs ---
+data class PrpBatch(
+    val id: Int,
+    val status: String,
+    val vendor: String?,
+    val carrier: String?,
+    @SerializedName("tracking_number") val trackingNumber: String?,
+    @SerializedName("opened_by_eid") val openedByEid: String?,
+    @SerializedName("opened_by_name") val openedByName: String?,
+    @SerializedName("closed_by_eid") val closedByEid: String?,
+    @SerializedName("closed_by_name") val closedByName: String?,
+    @SerializedName("shipped_at") val shippedAt: String?,
+    val notes: String?,
+    @SerializedName("created_at") val createdAt: String?,
+    @SerializedName("closed_at") val closedAt: String?,
+    @SerializedName("item_count") val itemCount: Int? = 0,
+    @SerializedName("unit_count") val unitCount: Int? = 0
+)
+
+data class PrpBatchItem(
+    val id: Int,
+    @SerializedName("batch_id") val batchId: Int,
+    val sku: String,
+    val name: String?,
+    val quantity: Int,
+    @SerializedName("reason_code") val reasonCode: String,
+    val notes: String?,
+    @SerializedName("scanned_by_eid") val scannedByEid: String?,
+    @SerializedName("scanned_by_name") val scannedByName: String?,
+    @SerializedName("scanned_at") val scannedAt: String?
+)
+
+data class PrpBatchDetailResponse(
+    val success: Boolean,
+    val batch: PrpBatch?,
+    val items: List<PrpBatchItem>?,
+    val message: String? = null
+)
+
+data class CreatePrpBatchRequest(
+    val vendor: String?,
+    val notes: String?,
+    val eid: String?
+)
+
+data class CreatePrpBatchResponse(
+    val success: Boolean,
+    val id: Int?,
+    val message: String?,
+    @SerializedName("batch_id") val existingBatchId: Int? = null
+)
+
+data class AddPrpItemRequest(
+    val sku: String,
+    val quantity: Int,
+    @SerializedName("reason_code") val reasonCode: String,
+    val notes: String?,
+    val eid: String?
+)
+
+data class AddPrpItemResponse(
+    val success: Boolean,
+    val id: Int?,
+    val sku: String?,
+    val name: String?,
+    @SerializedName("new_quantity") val newQuantity: Int?,
+    val message: String?
+)
+
+data class ClosePrpBatchRequest(val eid: String?)
+
+data class ShipPrpBatchRequest(
+    val carrier: String?,
+    @SerializedName("tracking_number") val trackingNumber: String?
+)
+
+class EmptyRequest
 
 data class PricingEvent(
     val id: Int,
@@ -288,17 +839,159 @@ data class Task(
     @SerializedName("assigned_name") val assignedName: String?,
     @SerializedName("due_date") val dueDate: String?,
     val priority: String,
-    val status: String
+    val status: String,
+    @SerializedName("task_type") val taskType: String? = "GENERAL",
+    @SerializedName("pog_items") val pogItems: List<TaskPogItem>? = null
+)
+
+data class TaskPogItem(
+    @SerializedName("pog_id") val pogId: String,
+    @SerializedName("pog_name") val pogName: String?,
+    @SerializedName("pog_dimensions") val pogDimensions: String?,
+    @SerializedName("pog_suffix") val pogSuffix: String?,
+    @SerializedName("scanned_at") val scannedAt: String?,
+    @SerializedName("scanned_by_eid") val scannedByEid: String?,
+    @SerializedName("scanned_by_name") val scannedByName: String?
 )
 
 data class UpdateTaskRequest(val status: String)
+
+data class ResetScanRequest(
+    @SerializedName("pog_id") val pogId: String,
+    val eid: String?
+)
+
+data class SaleRow(
+    val timestamp: String?,
+    @SerializedName("tender_type") val tenderType: String?,
+    @SerializedName("receipt_total") val receiptTotal: Double?,
+    val barcode: String?,
+    val quantity: Int?,
+    val price: Double?,
+    @SerializedName("original_price") val originalPrice: Double?,
+    val name: String?,
+    val sku: String?,
+    val upc: String?
+)
+
+data class SalesHistoryResponse(
+    val success: Boolean,
+    val sales: List<SaleRow>?,
+    val message: String? = null
+)
+
+data class AdjustmentRequest(
+    val sku: String,
+    @SerializedName("adjustment_type") val adjustmentType: String,
+    val quantity: Int,
+    @SerializedName("reason_code") val reasonCode: String?,
+    val notes: String?,
+    val eid: String?
+)
+
+data class AdjustmentResponse(
+    val success: Boolean,
+    val message: String?,
+    val sku: String? = null,
+    @SerializedName("new_quantity") val newQuantity: Int? = null
+)
+
+data class ComplianceRequest(
+    @SerializedName("check_type") val checkType: String,
+    @SerializedName("fixture_id") val fixtureId: String?,
+    val details: String?, // JSON-encoded
+    val passed: Boolean,
+    val notes: String?,
+    val eid: String?
+)
+
+data class TransferRequest(
+    val sku: String,
+    val quantity: Int,
+    @SerializedName("other_store_id") val otherStoreId: Int?,
+    val notes: String?,
+    val eid: String?
+)
+
+data class MoverRow(
+    val sku: String,
+    val name: String?,
+    @SerializedName("units_sold") val unitsSold: Int? = null,
+    val revenue: Double? = null,
+    @SerializedName("on_hand") val onHand: Int? = null,
+    val department: String? = null,
+    val price: Double? = null
+)
+
+data class MoversResponse(
+    val success: Boolean,
+    @SerializedName("window_days") val windowDays: Int?,
+    val tons: List<MoverRow>?,
+    val nones: List<MoverRow>?
+)
+
+data class ReviewAdjustment(
+    val id: Int,
+    val sku: String,
+    @SerializedName("adjustment_type") val adjustmentType: String,
+    val quantity: Int,
+    @SerializedName("reason_code") val reasonCode: String?,
+    val notes: String?,
+    val eid: String?,
+    @SerializedName("created_at") val createdAt: String?,
+    @SerializedName("item_name") val itemName: String?,
+    @SerializedName("eid_name") val eidName: String?
+)
+
+data class ReviewTransfer(
+    val id: Int,
+    val direction: String,
+    @SerializedName("other_store_id") val otherStoreId: Int?,
+    val sku: String,
+    val quantity: Int,
+    val status: String,
+    val notes: String?,
+    @SerializedName("created_at") val createdAt: String?,
+    @SerializedName("item_name") val itemName: String?
+)
+
+data class ReviewComplianceFail(
+    val id: Int,
+    @SerializedName("check_type") val checkType: String,
+    @SerializedName("fixture_id") val fixtureId: String?,
+    val details: String?,
+    val notes: String?,
+    val eid: String?,
+    @SerializedName("created_at") val createdAt: String?
+)
+
+data class ReviewResponse(
+    val success: Boolean,
+    val adjustments: List<ReviewAdjustment>?,
+    val transfers: List<ReviewTransfer>?,
+    @SerializedName("failed_compliance") val failedCompliance: List<ReviewComplianceFail>?
+)
+
+data class ResetScanResponse(
+    val success: Boolean,
+    val status: String?, // "applied" | "completed" | "already_done" | "not_found"
+    @SerializedName("task_id") val taskId: Int?,
+    @SerializedName("pog_id") val pogId: String?,
+    @SerializedName("pog_name") val pogName: String?,
+    val completed: Int?,
+    val total: Int?,
+    @SerializedName("scanned_at") val scannedAt: String?,
+    @SerializedName("scanned_by_eid") val scannedByEid: String?,
+    @SerializedName("scanned_by_name") val scannedByName: String?,
+    val message: String? = null
+)
 
 data class CycleCountItem(
     val sku: String,
     val name: String,
     val upc: String?,
-    val section: String,
-    val shelf: String,
+    val section: String?,
+    val shelf: String?,
     val faces: String?,
     val quantity: Int
 )
@@ -307,6 +1000,7 @@ data class CycleCountSectionResponse(
     val success: Boolean,
     @SerializedName("pog_id") val pogId: String?,
     @SerializedName("pog_name") val pogName: String?,
+    @SerializedName("pog_type") val pogType: String?,
     val section: String?,
     val items: List<CycleCountItem>?,
     val message: String? = null

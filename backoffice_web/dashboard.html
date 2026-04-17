@@ -5,6 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>StoreNET - District Control Center</title>
     <link rel="stylesheet" href="style.css">
+    <script src="https://cdn.jsdelivr.net/npm/jsbarcode@3.11.6/dist/JsBarcode.all.min.js"></script>
     <style>
         .tab-bar { display: flex; background: #eee; border-bottom: 1px solid #ddd; margin-bottom: 15px; }
         .tab { padding: 10px 20px; cursor: pointer; border-right: 1px solid #ddd; }
@@ -13,6 +14,39 @@
         .provision-row input { padding: 4px; font-size: 12px; }
         .action-link { color: #3498db; cursor: pointer; text-decoration: underline; margin-right: 10px; font-size: 11px; }
         .action-link.delete { color: #e74c3c; }
+
+        /* ── Toast Notifications ── */
+        #toast-container { position: fixed; bottom: 24px; right: 24px; z-index: 9999; display: flex; flex-direction: column; gap: 10px; pointer-events: none; }
+        .toast { padding: 12px 18px; border-radius: 8px; color: #fff; font-size: 14px; font-weight: 500; opacity: 0; transform: translateX(110%); transition: opacity .25s ease, transform .25s ease; pointer-events: all; min-width: 240px; max-width: 420px; box-shadow: 0 4px 16px rgba(0,0,0,.35); display: flex; align-items: center; gap: 10px; }
+        .toast.show { opacity: 1; transform: translateX(0); }
+        .toast.success { background: #10b981; }
+        .toast.error   { background: #ef4444; }
+        .toast.warning { background: #f59e0b; }
+        .toast.info    { background: #3b82f6; }
+        .toast-icon { font-size: 16px; flex-shrink: 0; }
+
+        /* ── Styled Confirm Dialog ── */
+        #confirm-overlay { position: fixed; inset: 0; background: rgba(0,0,0,.55); z-index: 9998; display: none; align-items: center; justify-content: center; }
+        #confirm-overlay.open { display: flex; }
+        #confirm-box { background: #1e293b; border: 2px solid #ef4444; border-radius: 12px; padding: 32px 36px; max-width: 420px; width: 90%; text-align: center; box-shadow: 0 8px 32px rgba(0,0,0,.5); }
+        #confirm-box h3 { color: #fff; margin: 0 0 10px; font-size: 20px; }
+        #confirm-box p  { color: #94a3b8; margin: 0 0 24px; font-size: 14px; line-height: 1.5; }
+        #confirm-box .btn-row { display: flex; gap: 12px; justify-content: center; }
+        #confirm-box .btn-row button { padding: 10px 28px; font-size: 14px; font-weight: 600; border-radius: 6px; cursor: pointer; border: none; }
+        #confirm-yes-btn { background: #ef4444; color: #fff; }
+        #confirm-no-btn  { background: #475569; color: #fff; }
+
+        /* ── Table Loading / Empty States ── */
+        .tbl-loading td, .tbl-empty td { text-align: center; padding: 32px; color: #64748b; font-style: italic; }
+        .spinner { display: inline-block; width: 15px; height: 15px; border: 2px solid #334155; border-top-color: #3b82f6; border-radius: 50%; animation: _spin .6s linear infinite; margin-right: 8px; vertical-align: middle; }
+        @keyframes _spin { to { transform: rotate(360deg); } }
+
+        /* ── Sidebar badge for alerts ── */
+        .nav-badge { display: inline-block; background: #ef4444; color: #fff; font-size: 10px; font-weight: bold; border-radius: 10px; padding: 1px 6px; margin-left: 6px; vertical-align: middle; }
+
+        /* ── Adjustments module ── */
+        .adj-type-btn { padding: 8px 18px; border-radius: 6px; border: 2px solid #334155; background: transparent; color: #94a3b8; cursor: pointer; font-weight: 600; transition: all .15s; }
+        .adj-type-btn.active { border-color: #3b82f6; background: #1e3a5f; color: #fff; }
     </style>
 </head>
 <body>
@@ -32,6 +66,10 @@
             <div class="nav-item" onclick="switchModule('schedule', this)" style="color: #ffd100; font-weight: bold;">Employee Schedule</div>
             <div class="nav-item" onclick="switchModule('promotions', this)" style="color: #f59e0b; font-weight: bold;">Promotions / Coupons</div>
             <div class="nav-item" onclick="switchModule('tasks', this)">Store Tasks</div>
+            <div class="nav-item" onclick="switchModule('prp', this)" style="color: #5D4037; font-weight: bold;">PRP Returns</div>
+            <div class="nav-item" onclick="switchModule('vendors', this)" style="color: #5D4037; font-weight: bold;">Vendors (DSD)</div>
+            <div class="nav-item" onclick="window.location.href='/respond'" style="color: #dc2626; font-weight: bold;">↗ Open DG Respond</div>
+            <div class="nav-item" onclick="switchModule('reports', this)" style="color: #8b5cf6; font-weight: bold;">🖨 Reports</div>
             
             <div style="margin-top: 50px; padding: 20px; border-top: 1px solid #3e4f5f;">
                 <label style="font-size: 10px; display: block; margin-bottom: 5px; color: #ffd100;">MANAGEMENT CONTEXT</label>
@@ -53,7 +91,7 @@
 
                 <!-- GLOBAL MASTER LIST -->
                 <div id="mi-list" class="tab-section">
-                    <div class="card" style="display:flex; justify-content:space-between; align-items:center;">
+                    <div class="card" style="display:flex; justify-content:space-between; align-items:center; flex-wrap: wrap; gap: 10px;">
                         <div style="display:flex; align-items:center; gap: 15px;">
                             <span id="masterContextLabel">District-wide SKU authority.</span>
                             <div>
@@ -62,7 +100,9 @@
                                 <button onclick="changeMasterPage(1)" style="padding: 2px 8px;">Next &gt;</button>
                             </div>
                         </div>
+                        <input type="text" id="masterSearchInput" placeholder="Search SKU, UPC, Name, Dept..." oninput="filterMasterInventory()" style="padding: 6px 10px; width: 280px;">
                         <button class="primary" onclick="openPushModal('MASTER')">Push Master to Stores...</button>
+                        <button class="danger" onclick="clearMasterInventory()">Clear All Items (Delete List)</button>
                     </div>
                     <table class="data-table" id="masterInvTable">
                         <thead>
@@ -83,7 +123,7 @@
 
                 <!-- LOCAL STORE LIST -->
                 <div id="mi-local" class="tab-section" style="display:none;">
-                    <div class="card" style="display:flex; justify-content:space-between; align-items:center;">
+                    <div class="card" style="display:flex; justify-content:space-between; align-items:center; flex-wrap: wrap; gap: 10px;">
                         <div style="display:flex; align-items:center; gap: 15px;">
                             <span id="localContextLabel">Context: Store #14302</span>
                             <div>
@@ -92,8 +132,11 @@
                                 <button onclick="changeLocalPage(1)" style="padding: 2px 8px;">Next &gt;</button>
                             </div>
                         </div>
-                        <div>
+                        <input type="text" id="localSearchInput" placeholder="Search SKU, UPC, Name, Dept, or price ($0.01, <1, >5)..." oninput="filterLocalInventory()" style="padding: 6px 10px; width: 280px;">
+                        <div style="display:flex; gap:8px; flex-wrap:wrap;">
                             <button class="primary" onclick="syncLocalToMaster()">Sync Local items to Master...</button>
+                            <button class="primary" onclick="exportCsv('inventory')" style="background:#2c3e50;">Export CSV</button>
+                            <button class="primary" onclick="promptDeptReport()" style="background:#8e44ad;">Print Dept Report</button>
                             <button class="danger" onclick="clearLocalInventory()">Clear All Items (Delete List)</button>
                         </div>
                     </div>
@@ -105,11 +148,12 @@
                                 <td><input type="text" id="add-loc-name" placeholder="Name"></td>
                                 <td><input type="text" id="add-loc-dept" placeholder="Dept"></td>
                                 <td><input type="text" id="add-loc-qty" placeholder="Qty"></td>
+                                <td></td>
                                 <td><input type="text" id="add-loc-pack" placeholder="Pack" style="width: 50px;"></td>
                                 <td><input type="text" id="add-loc-price" placeholder="Price"></td>
                                 <td><button onclick="addLocalItem()">ADD SKU</button></td>
                             </tr>
-                            <tr><th>SKU</th><th>UPC</th><th>Name</th><th>Dept</th><th>QTY</th><th>Pack</th><th>Price (Reg)</th><th>Actions</th></tr>
+                            <tr><th>SKU</th><th>UPC</th><th>Name</th><th>Dept</th><th>Floor</th><th>Backstock</th><th>Pack</th><th>Price (Reg)</th><th>Actions</th></tr>
                         </thead>
                         <tbody></tbody>
                     </table>
@@ -126,10 +170,20 @@
             </div>
 
             <div id="module-pogs" class="module-view" style="display: none;">
+                <div class="tab-bar">
+                    <div class="tab active" onclick="switchPogTab('pog-main', this)">Planogram Maintenance</div>
+                    <div class="tab" onclick="switchPogTab('pog-cc-schedule', this)">Cycle Count Schedule</div>
+                    <div class="tab" onclick="switchPogTab('pog-reset-history', this); loadResetHistory();">Reset History</div>
+                </div>
+
+                <div id="pog-main" class="pog-tab-section">
                 <div class="content-header">
                     <div style="display: flex; justify-content: space-between; width: 100%;">
                         <h1>Planogram Maintenance</h1>
-                        <button class="primary" onclick="openCreatePogModal()">+ New Planogram</button>
+                        <div style="display:flex; gap:10px;">
+                            <button class="primary" onclick="openCreateResetModal()" style="background:#8b5cf6;">+ New Reset Task</button>
+                            <button class="primary" onclick="openCreatePogModal()">+ New Planogram</button>
+                        </div>
                     </div>
                 </div>
 
@@ -149,11 +203,12 @@
                         <h3 id="pogEditorHeader" style="margin: 0;">Planogram # xxxxxx - NAME - 12x78 - GO</h3>
                         <div>
                             <button onclick="closePogEditor()">Back to List</button>
+                            <button onclick="openEditPogMetaModal()">Edit Metadata</button>
                             <button class="primary" onclick="openPushModal('POG')">Push to Stores...</button>
                         </div>
                     </div>
                     
-                    <div style="display: flex; gap: 15px; margin-bottom: 15px; align-items: center; background: #f8fafc; padding: 15px; border-radius: 4px; border: 1px solid #e2e8f0;">
+                    <div id="pogSectionShelfBar" style="display: flex; gap: 15px; margin-bottom: 15px; align-items: center; background: #f8fafc; padding: 15px; border-radius: 4px; border: 1px solid #e2e8f0;">
                         <div>
                             <label style="font-weight: bold; margin-right: 5px;">Section:</label>
                             <select id="pogSectionSelect" onchange="loadPogItems()" style="padding: 5px;">
@@ -171,10 +226,72 @@
                         </div>
                         <button class="primary" onclick="openPogAddItemModal()">+ Add Product to Shelf</button>
                     </div>
+                    <div id="pogLocationBar" style="display: none; margin-bottom: 15px; align-items: center; background: #fef9c3; padding: 15px; border-radius: 4px; border: 1px solid #fde047;">
+                        <span style="font-weight: bold; color: #92400e;">Location-only planogram — items are assigned directly to this POG.</span>
+                        <button onclick="printLocationBarcode()" title="Print barcode for this location planogram">🖨 Print Barcode</button>
+                        <button class="primary" style="margin-left: auto;" onclick="openPogAddItemModal()">+ Add Product</button>
+                    </div>
 
                     <table class="data-table" id="pogItemsTable">
                         <thead>
-                            <tr><th>SKU</th><th>UPC</th><th>Name</th><th>Faces</th><th>Pos.</th><th>Actions</th></tr>
+                            <tr><th>SKU</th><th>UPC</th><th>Name</th><th>Faces</th><th>Pos.<br><small style="color:#94a3b8; font-weight:normal;">(planogram)</small></th><th>Actions</th></tr>
+                        </thead>
+                        <tbody></tbody>
+                    </table>
+                </div>
+                </div><!-- end pog-main -->
+
+                <!-- CYCLE COUNT SCHEDULE TAB -->
+                <div id="pog-cc-schedule" class="pog-tab-section" style="display:none;">
+                    <div class="content-header">
+                        <h1>Cycle Count Schedule</h1>
+                        <div style="display:flex; gap:10px;">
+                            <button class="primary" onclick="printTodayCountSheets()" style="background:#8e44ad;">Print Today's Count Sheets</button>
+                            <button class="primary" onclick="printShrinkReport()" style="background:#e74c3c;">Print Shrink Report</button>
+                        </div>
+                    </div>
+
+                    <div class="card" style="display:flex; gap:10px; align-items:center; padding:12px;">
+                        <select id="ccPogSelect" style="padding:6px;"><option value="">Select Planogram...</option></select>
+                        <select id="ccSectionSelect" style="padding:6px;">
+                            <option value="A">A</option><option value="B">B</option><option value="C">C</option><option value="D">D</option><option value="E">E</option>
+                            <option value="F">F</option><option value="G">G</option><option value="H">H</option><option value="I">I</option><option value="J">J</option>
+                        </select>
+                        <select id="ccDaySelect" style="padding:6px;">
+                            <option value="0">Sunday</option><option value="1">Monday</option><option value="2">Tuesday</option><option value="3">Wednesday</option>
+                            <option value="4">Thursday</option><option value="5">Friday</option><option value="6">Saturday</option>
+                        </select>
+                        <button class="primary" onclick="addCycleCountAssignment()">+ Add</button>
+                    </div>
+
+                    <table class="data-table" id="ccScheduleTable">
+                        <thead><tr><th>Planogram</th><th>Section</th><th>Day</th><th>Actions</th></tr></thead>
+                        <tbody></tbody>
+                    </table>
+                </div>
+
+                <!-- RESET HISTORY TAB -->
+                <div id="pog-reset-history" class="pog-tab-section" style="display:none;">
+                    <div class="content-header">
+                        <h1>Reset History</h1>
+                        <div style="display:flex; gap:8px;">
+                            <button onclick="loadResetHistory('ALL')" id="rhFilterAll" class="primary">All</button>
+                            <button onclick="loadResetHistory('OPEN')" id="rhFilterOpen">In Progress</button>
+                            <button onclick="loadResetHistory('DONE')" id="rhFilterDone">Completed</button>
+                        </div>
+                    </div>
+                    <p style="color:#64748b; font-size:13px;">Every planogram reset task ever created for this store (Store #<span id="rhStoreLabel">—</span>), newest first. Reprint is available for completed resets.</p>
+                    <table class="data-table" id="resetHistoryTable">
+                        <thead>
+                            <tr>
+                                <th>Title</th>
+                                <th>Status</th>
+                                <th>Created</th>
+                                <th>Completed</th>
+                                <th>POGs (scanned / total)</th>
+                                <th>Scanners</th>
+                                <th>Actions</th>
+                            </tr>
                         </thead>
                         <tbody></tbody>
                     </table>
@@ -265,17 +382,56 @@
                 </table>
             </div>
             <div id="module-truck-receiving" class="module-view" style="display: none;">
-                <div class="content-header">
-                    <h1>Truck Delivery Management</h1>
-                    <button class="primary" onclick="openDispatchTruckModal()" style="background: #27ae60;">+ Dispatch New Truck</button>
+                <div class="tab-bar">
+                    <div class="tab active" onclick="switchTruckTab('trk-manifests', this)">Truck Manifests</div>
+                    <div class="tab" onclick="switchTruckTab('trk-reorders', this)">Auto Reorders</div>
                 </div>
-                <div class="card" id="trkContextLabel">Context: Store #14302</div>
-                <table class="data-table" id="manifestsTable">
-                    <thead>
-                        <tr><th>Manifest #</th><th>Status</th><th>Created</th><th>Action</th></tr>
-                    </thead>
-                    <tbody></tbody>
-                </table>
+
+                <!-- MANIFESTS SUB-TAB -->
+                <div id="trk-manifests" class="trk-tab-section">
+                    <div class="content-header">
+                        <h1>Truck Delivery Management</h1>
+                        <div style="display:flex; gap:10px;">
+                            <button class="primary" onclick="openDispatchTruckModal()" style="background: #27ae60;">+ Dispatch New Truck</button>
+                            <button class="primary" onclick="exportCsv('manifests')" style="background:#2c3e50;">Export CSV</button>
+                        </div>
+                    </div>
+                    <div class="card" id="trkContextLabel">Context: Store #14302</div>
+                    <table class="data-table" id="manifestsTable">
+                        <thead>
+                            <tr><th>Manifest #</th><th>Status</th><th>Created</th><th>Action</th></tr>
+                        </thead>
+                        <tbody></tbody>
+                    </table>
+                    <div id="manifestsPagination" style="display:flex; justify-content:center; align-items:center; gap:12px; margin-top:12px;"></div>
+                </div>
+
+                <!-- AUTO REORDERS SUB-TAB -->
+                <div id="trk-reorders" class="trk-tab-section" style="display:none;">
+                    <div class="content-header">
+                        <h1>Automatic Reorders</h1>
+                        <div style="display:flex; gap:10px;">
+                            <select id="reorderStatusFilter" onchange="loadReorders(1)" style="padding:8px;">
+                                <option value="">All Statuses</option>
+                                <option value="PENDING">Pending</option>
+                                <option value="ORDERED">Ordered</option>
+                                <option value="RECEIVED">Received</option>
+                                <option value="CANCELLED">Cancelled</option>
+                            </select>
+                            <button class="primary" onclick="generateManifestFromReorders()" style="background: #27ae60;">Generate Manifest from Pending</button>
+                            <button class="primary" onclick="triggerReorderCheck()" style="background: #e67e22;">Run Reorder Check Now</button>
+                            <button class="primary" onclick="exportCsv('reorders')" style="background:#2c3e50;">Export CSV</button>
+                        </div>
+                    </div>
+                    <div class="card" id="reorderContextLabel">Context: Store #14302</div>
+                    <table class="data-table" id="reordersTable">
+                        <thead>
+                            <tr><th>SKU</th><th>Name</th><th>Stock (Floor + Back)</th><th>Reorder (Units)</th><th>Reorder (Boxes)</th><th>Status</th><th>Created</th><th>Actions</th></tr>
+                        </thead>
+                        <tbody></tbody>
+                    </table>
+                    <div id="reordersPagination" style="display:flex; justify-content:center; align-items:center; gap:12px; margin-top:12px;"></div>
+                </div>
             </div>
             <div id="module-rolltainers" class="module-view" style="display: none;">
                 <div class="content-header">
@@ -300,6 +456,9 @@
                         <span id="scheduleWeekLabel" style="font-weight:bold; font-size:16px;"></span>
                         <button onclick="scheduleNav(1)" style="padding: 6px 14px;">Next Week &gt;</button>
                         <button class="primary" onclick="openShiftModal(null)" style="margin-left:20px;">+ Add Shift</button>
+                        <button class="primary" onclick="printWeeklySchedule()" style="background:#8e44ad;">Print Weekly Summary</button>
+                        <button class="primary" onclick="promptPrintIndividual()" style="background:#2c3e50;">Print Individual</button>
+                        <button class="primary" onclick="exportCsv('schedule')" style="background:#2c3e50;">Export CSV</button>
                     </div>
                 </div>
 
@@ -351,7 +510,11 @@
             <div id="module-tasks" class="module-view" style="display: none;">
                 <div class="content-header" style="display:flex; justify-content:space-between; align-items:center;">
                     <h1>Store Tasks</h1>
-                    <button class="primary" onclick="openTaskModal()">+ New Task</button>
+                    <div style="display:flex; gap:10px;">
+                        <button class="primary" onclick="printOpeningReport()" style="background:#27ae60;">Print Opening Report</button>
+                        <button class="primary" onclick="printClosingReport()" style="background:#e74c3c;">Print Closing Report</button>
+                        <button class="primary" onclick="openTaskModal()">+ New Task</button>
+                    </div>
                 </div>
                 <div style="display:flex; gap:8px; margin-bottom:16px;">
                     <button onclick="loadTasks('OPEN')" id="tasksFilterOpen" class="primary">Open</button>
@@ -360,6 +523,158 @@
                 <table class="data-table" id="tasksTable">
                     <thead><tr><th>Priority</th><th>Title</th><th>Assigned To</th><th>Due Date</th><th>Actions</th></tr></thead>
                     <tbody></tbody>
+                </table>
+            </div>
+
+            <div id="module-vendors" class="module-view" style="display: none;">
+                <div class="content-header" style="display:flex; justify-content:space-between; align-items:center;">
+                    <h1>Vendors (DSD Suppliers)</h1>
+                    <div style="display:flex; gap:10px;">
+                        <button class="primary" onclick="openVendorModal()">+ New Vendor</button>
+                    </div>
+                </div>
+                <p style="color:#64748b; font-size:13px; margin-bottom:12px;">
+                    Direct-Store-Delivery vendors (Coke, Frito-Lay, bread distributors, etc.). Tag SKUs to a vendor from the Inventory tab — tagged SKUs show up in <strong>DG Respond</strong> for scan-to-order and vendor returns.
+                </p>
+                <table class="data-table" id="vendorsTable">
+                    <thead><tr><th>Code</th><th>Name</th><th>Contact</th><th>Schedule</th><th>SKUs</th><th>Active</th><th>Actions</th></tr></thead>
+                    <tbody></tbody>
+                </table>
+            </div>
+
+            <!-- Vendor create/edit modal -->
+            <div class="modal" id="vendorModal" style="display:none; position:fixed; inset:0; background:rgba(0,0,0,0.5); z-index:1000; align-items:center; justify-content:center;">
+                <div style="background:white; padding:24px; border-radius:12px; max-width:500px; width:90%;">
+                    <h2 id="vendorModalTitle">New Vendor</h2>
+                    <input type="hidden" id="vendorId">
+                    <div style="display:grid; grid-template-columns: 1fr 1fr; gap:10px; margin-top:14px;">
+                        <div><label style="font-size:11px;color:#64748b;">Code (short)</label><input type="text" id="vendorCode" placeholder="COKE" style="width:100%;padding:8px;"></div>
+                        <div><label style="font-size:11px;color:#64748b;">Active</label><select id="vendorActive" style="width:100%;padding:8px;"><option value="1">Active</option><option value="0">Inactive</option></select></div>
+                    </div>
+                    <label style="font-size:11px;color:#64748b;">Name</label><input type="text" id="vendorName" placeholder="Coca-Cola Bottling Co." style="width:100%;padding:8px;margin-bottom:8px;">
+                    <div style="display:grid; grid-template-columns: 1fr 1fr; gap:10px;">
+                        <div><label style="font-size:11px;color:#64748b;">Contact name</label><input type="text" id="vendorContactName" style="width:100%;padding:8px;"></div>
+                        <div><label style="font-size:11px;color:#64748b;">Contact phone</label><input type="text" id="vendorContactPhone" style="width:100%;padding:8px;"></div>
+                    </div>
+                    <label style="font-size:11px;color:#64748b;">Contact email</label><input type="email" id="vendorContactEmail" style="width:100%;padding:8px;margin-bottom:8px;">
+                    <label style="font-size:11px;color:#64748b;">Delivery schedule</label><input type="text" id="vendorSchedule" placeholder="Tue & Fri mornings" style="width:100%;padding:8px;margin-bottom:8px;">
+                    <label style="font-size:11px;color:#64748b;">Notes</label><textarea id="vendorNotes" style="width:100%;padding:8px;height:60px;"></textarea>
+                    <div style="display:flex; gap:10px; justify-content:flex-end; margin-top:16px;">
+                        <button onclick="document.getElementById('vendorModal').style.display='none'">Cancel</button>
+                        <button class="primary" onclick="saveVendor()">Save</button>
+                    </div>
+                </div>
+            </div>
+
+            <div id="module-prp" class="module-view" style="display: none;">
+                <div class="content-header" style="display:flex; justify-content:space-between; align-items:center;">
+                    <h1>PRP Returns</h1>
+                    <div style="font-size:12px; color:#64748b;">Product Return Process — defective / recall / vendor-return batches</div>
+                </div>
+                <div style="display:flex; gap:8px; margin-bottom:16px;">
+                    <button onclick="loadPrp('OPEN')" id="prpFilterOpen" class="primary">Open</button>
+                    <button onclick="loadPrp('CLOSED')" id="prpFilterClosed">Closed (awaiting ship)</button>
+                    <button onclick="loadPrp('SHIPPED')" id="prpFilterShipped">Shipped</button>
+                </div>
+                <table class="data-table" id="prpTable">
+                    <thead><tr><th>Batch #</th><th>Status</th><th>Vendor</th><th>Lines / Units</th><th>Opened</th><th>Closed</th><th>Actions</th></tr></thead>
+                    <tbody></tbody>
+                </table>
+                <div id="prpDetail" style="display:none; margin-top:20px;">
+                    <div class="content-header" style="display:flex; justify-content:space-between; align-items:center;">
+                        <h2 id="prpDetailTitle">Batch Detail</h2>
+                        <button onclick="document.getElementById('prpDetail').style.display='none'">Close</button>
+                    </div>
+                    <div id="prpDetailInfo" style="margin-bottom:12px; font-size:13px;"></div>
+                    <table class="data-table" id="prpDetailTable">
+                        <thead><tr><th>SKU</th><th>Item</th><th>Qty</th><th>Reason</th><th>Notes</th><th>Scanned By</th><th>Scanned At</th></tr></thead>
+                        <tbody></tbody>
+                    </table>
+                </div>
+            </div>
+
+            <div id="module-reports" class="module-view" style="display: none;">
+                <div class="content-header">
+                    <h1>Reports — Laser Printer</h1>
+                </div>
+                <p style="color:#64748b; font-size:13px;">
+                    Every report wired to the office printer (<strong>HP DeskJet Plus 4155</strong>, CUPS queue <code>HP4155</code>). Click <em>Print</em> on any row; reports with optional inputs use today / defaults when left blank.
+                </p>
+                <div id="reportsStatusBar" style="display:none; margin:10px 0; padding:10px; border-radius:4px;"></div>
+                <table class="data-table" style="table-layout: fixed;">
+                    <colgroup>
+                        <col style="width:28%;">
+                        <col style="width:44%;">
+                        <col style="width:28%;">
+                    </colgroup>
+                    <thead>
+                        <tr><th>Report</th><th>Options</th><th style="text-align:right;">Action</th></tr>
+                    </thead>
+                    <tbody>
+                        <tr>
+                            <td><strong>Opening Report</strong><br><small style="color:#64748b;">Daily opener checklist + pending tasks</small></td>
+                            <td><label style="font-size:12px; color:#64748b;">Date</label> <input type="date" id="rptOpeningDate" style="padding:4px;"></td>
+                            <td style="text-align:right;"><button class="primary" style="background:#27ae60;" onclick="runReport('opening')">Print</button></td>
+                        </tr>
+                        <tr>
+                            <td><strong>Closing Report</strong><br><small style="color:#64748b;">End-of-day totals + completed tasks</small></td>
+                            <td><label style="font-size:12px; color:#64748b;">Date</label> <input type="date" id="rptClosingDate" style="padding:4px;"></td>
+                            <td style="text-align:right;"><button class="primary" style="background:#e74c3c;" onclick="runReport('closing')">Print</button></td>
+                        </tr>
+                        <tr>
+                            <td><strong>Weekly Schedule</strong><br><small style="color:#64748b;">Full store schedule, week of the selected date</small></td>
+                            <td><label style="font-size:12px; color:#64748b;">Week of</label> <input type="date" id="rptWeeklyDate" style="padding:4px;"></td>
+                            <td style="text-align:right;"><button class="primary" onclick="runReport('weekly')">Print</button></td>
+                        </tr>
+                        <tr>
+                            <td><strong>Individual Schedule</strong><br><small style="color:#64748b;">One employee's schedule for the week</small></td>
+                            <td>
+                                <select id="rptIndividualEid" style="padding:4px;"></select>
+                                <input type="date" id="rptIndividualDate" style="padding:4px;">
+                            </td>
+                            <td style="text-align:right;"><button class="primary" onclick="runReport('individual')">Print</button></td>
+                        </tr>
+                        <tr>
+                            <td><strong>Today's Cycle Count Sheets</strong><br><small style="color:#64748b;">Count sheets for every section scheduled today</small></td>
+                            <td style="color:#94a3b8;">No options</td>
+                            <td style="text-align:right;"><button class="primary" style="background:#8e44ad;" onclick="runReport('cyclecount')">Print</button></td>
+                        </tr>
+                        <tr>
+                            <td><strong>Shrink / Variance Report</strong><br><small style="color:#64748b;">Cycle count variances for the selected date</small></td>
+                            <td><label style="font-size:12px; color:#64748b;">Date</label> <input type="date" id="rptShrinkDate" style="padding:4px;"></td>
+                            <td style="text-align:right;"><button class="primary" style="background:#e74c3c;" onclick="runReport('shrink')">Print</button></td>
+                        </tr>
+                        <tr>
+                            <td><strong>Department Inventory Report</strong><br><small style="color:#64748b;">Full on-hand listing for one department</small></td>
+                            <td>
+                                <select id="rptDepartment" style="padding:4px;">
+                                    <option value="">— Select department —</option>
+                                </select>
+                            </td>
+                            <td style="text-align:right;"><button class="primary" onclick="runReport('department')">Print</button></td>
+                        </tr>
+                        <tr>
+                            <td><strong>Price Change Report</strong><br><small style="color:#64748b;">Before/after pricing for one pricing event</small></td>
+                            <td>
+                                <select id="rptPriceEvent" style="padding:4px;">
+                                    <option value="">— Select pricing event —</option>
+                                </select>
+                            </td>
+                            <td style="text-align:right;"><button class="primary" style="background:#f59e0b;" onclick="runReport('price')">Print</button></td>
+                        </tr>
+                    </tbody>
+                </table>
+
+                <h2 style="margin-top:24px; font-size:16px;">Planogram Reset Signoffs</h2>
+                <p style="color:#64748b; font-size:13px;">Reprint the signoff sheet for any completed reset. (For in-progress resets, use the View Progress modal under <strong>Planogram Maintenance → Reset History</strong>.)</p>
+                <table class="data-table" id="reportsResetsTable" style="table-layout: fixed;">
+                    <colgroup>
+                        <col style="width:32%;"><col style="width:16%;"><col style="width:24%;"><col style="width:28%;">
+                    </colgroup>
+                    <thead>
+                        <tr><th>Reset Title</th><th>Task ID</th><th>Completed</th><th style="text-align:right;">Action</th></tr>
+                    </thead>
+                    <tbody><tr><td colspan="4" style="text-align:center; color:#94a3b8; padding:16px;">Loading…</td></tr></tbody>
                 </table>
             </div>
 
@@ -384,6 +699,62 @@
                     <button class="primary" onclick="submitTask()" style="flex:1;">Create</button>
                     <button onclick="document.getElementById('taskModal').style.display='none'" style="flex:1;">Cancel</button>
                 </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- CREATE RESET TASK MODAL -->
+    <div id="resetModal" style="display:none; position:fixed; top:0; left:0; width:100%; height:100%; background:rgba(0,0,0,0.5); justify-content:center; align-items:center; z-index:1000;">
+        <div class="card" style="width:640px; max-height:85vh; overflow-y:auto;">
+            <h3>New Planogram Reset Task</h3>
+            <p style="color:#64748b; font-size:12px; margin-top:-6px;">
+                Creates a task at each selected store. The planogram data is NOT pushed until an employee scans each POG's physical tag on the HHT. Completion requires scanning every tag in this reset.
+            </p>
+            <div style="display:flex; flex-direction:column; gap:10px;">
+                <input type="text" id="resetTitle" placeholder="Reset title (e.g. Spring 2026 Grand Reset)" style="padding:8px;">
+                <textarea id="resetDescription" placeholder="Notes (optional, appears on signoff sheet)" style="padding:8px; height:60px; resize:vertical;"></textarea>
+                <div style="display:grid; grid-template-columns:1fr 1fr; gap:10px;">
+                    <div>
+                        <label style="font-size:12px; color:#64748b;">Due Date</label>
+                        <input type="date" id="resetDueDate" style="padding:8px; width:100%;">
+                    </div>
+                    <div>
+                        <label style="font-size:12px; color:#64748b;">Priority</label>
+                        <select id="resetPriority" style="padding:8px; width:100%;">
+                            <option value="NORMAL">Normal</option>
+                            <option value="HIGH">High</option>
+                            <option value="LOW">Low</option>
+                        </select>
+                    </div>
+                </div>
+
+                <div style="display:grid; grid-template-columns:1fr 1fr; gap:14px; margin-top:8px;">
+                    <div>
+                        <label style="font-weight:bold; font-size:13px;">Planograms in this reset</label>
+                        <div id="resetPogList" style="border:1px solid #e2e8f0; border-radius:4px; padding:8px; max-height:220px; overflow-y:auto; background:#fff;"></div>
+                    </div>
+                    <div>
+                        <label style="font-weight:bold; font-size:13px;">Send to stores</label>
+                        <div id="resetStoreList" style="border:1px solid #e2e8f0; border-radius:4px; padding:8px; max-height:220px; overflow-y:auto; background:#fff;"></div>
+                    </div>
+                </div>
+
+                <div style="display:flex; gap:8px; margin-top:8px;">
+                    <button class="primary" onclick="submitReset()" style="flex:1; background:#8b5cf6;">Create Reset Task</button>
+                    <button onclick="document.getElementById('resetModal').style.display='none'" style="flex:1;">Cancel</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- RESET TASK DETAIL MODAL (read-only POG progress view) -->
+    <div id="resetDetailModal" style="display:none; position:fixed; top:0; left:0; width:100%; height:100%; background:rgba(0,0,0,0.5); justify-content:center; align-items:center; z-index:1000;">
+        <div class="card" style="width:700px; max-height:85vh; overflow-y:auto;">
+            <h3 id="resetDetailTitle">Reset Task Progress</h3>
+            <div id="resetDetailBody"></div>
+            <div style="display:flex; gap:8px; margin-top:12px;">
+                <button id="resetReprintBtn" class="primary" onclick="reprintResetSignoff()" style="display:none; flex:1;">Reprint Signoff</button>
+                <button onclick="document.getElementById('resetDetailModal').style.display='none'" style="flex:1;">Close</button>
             </div>
         </div>
     </div>
@@ -534,10 +905,47 @@
         </div>
     </div>
 
+    <!-- PRINT INDIVIDUAL SCHEDULE MODAL -->
+    <div id="printIndividualModal" style="display:none; position:fixed; top:0; left:0; width:100%; height:100%; background:rgba(0,0,0,0.5); justify-content:center; align-items:center; z-index: 1000;">
+        <div class="card" style="width:400px; background:#fff;">
+            <h3>Print Individual Schedule</h3>
+            <p style="color:#64748b; font-size:13px;">Select an employee to print their weekly schedule.</p>
+            <div id="printIndividualList" style="max-height:300px; overflow-y:auto; margin:15px 0;"></div>
+            <div style="text-align:right;">
+                <button onclick="document.getElementById('printIndividualModal').style.display='none'">Cancel</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- DEPARTMENT REPORT MODAL -->
+    <div id="deptReportModal" style="display:none; position:fixed; top:0; left:0; width:100%; height:100%; background:rgba(0,0,0,0.5); justify-content:center; align-items:center; z-index: 1000;">
+        <div class="card" style="width:400px; background:#fff;">
+            <h3>Print Department Inventory Report</h3>
+            <p style="color:#64748b; font-size:13px;">Select a department to print its full inventory report.</p>
+            <div id="deptReportList" style="max-height:300px; overflow-y:auto; margin:15px 0;"></div>
+            <div style="text-align:right;">
+                <button onclick="document.getElementById('deptReportModal').style.display='none'">Cancel</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- SHRINK REPORT MODAL -->
+    <div id="shrinkReportModal" style="display:none; position:fixed; top:0; left:0; width:100%; height:100%; background:rgba(0,0,0,0.5); justify-content:center; align-items:center; z-index: 1000;">
+        <div class="card" style="width:400px; background:#fff;">
+            <h3>Print Shrink / Variance Report</h3>
+            <p style="color:#64748b; font-size:13px;">Select a date to print the shrink report for that day's cycle counts.</p>
+            <div style="display:flex; gap:10px; align-items:center; margin:15px 0;">
+                <input type="date" id="shrinkReportDate" style="padding:8px; flex:1;">
+                <button class="primary" id="shrinkReportBtn" onclick="submitShrinkReport()" style="background:#e74c3c;">Print Report</button>
+            </div>
+        </div>
+    </div>
+
     <!-- VIEW MODAL (Generic for Manifests and Rolltainers) -->
     <div id="viewDetailModal" style="display:none; position:fixed; top:0; left:0; width:100%; height:100%; background:rgba(0,0,0,0.5); justify-content:center; align-items:center; z-index: 1010;">
         <div class="card" style="width:600px; background:#fff; max-height: 80vh; display: flex; flex-direction: column;">
             <h3 id="viewDetailTitle">Details</h3>
+            <div id="viewDetailBarcode" style="text-align:center; margin:10px 0; display:none;"></div>
             <div style="overflow-y: auto; flex-grow: 1; margin: 15px 0; border: 1px solid #eee;">
                 <table class="data-table" id="viewDetailTable">
                     <thead><tr id="viewDetailHeaders"></tr></thead>
@@ -547,6 +955,9 @@
             <div style="display: flex; gap: 10px; justify-content: space-between;">
                 <div style="display: flex; gap: 10px;">
                     <button class="primary" id="detailPrintBtn">PRINT SUMMARY</button>
+                    <button class="primary" id="detailPrintReportBtn" style="background: #8e44ad; display: none;">PRINT STORE COPY</button>
+                    <button class="primary" id="detailPrintDriverBtn" style="background: #2c3e50; display: none;">PRINT DRIVER COPY</button>
+                    <label id="detailAutoPrintLabel" style="display:none; align-items:center; gap:4px; font-size:12px; cursor:pointer;"><input type="checkbox" id="detailAutoPrint" checked> Auto-print store copy</label>
                     <button class="primary" id="detailReceiveBtn" style="background: #27ae60; display: none;">MASTER RECEIVE ALL</button>
                 </div>
                 <button onclick="document.getElementById('viewDetailModal').style.display='none'">CLOSE</button>
@@ -559,14 +970,49 @@
         <div class="card" style="width:400px; background:#fff;">
             <h3>Create New Planogram</h3>
             <div style="display: flex; flex-direction: column; gap: 10px; margin-top: 15px;">
-                <input type="text" id="newPogId" placeholder="POG ID (e.g. xxxxxx)">
+                <input type="text" id="newPogId" placeholder="POG ID (e.g. xxxxxx or MAG_36)">
                 <input type="text" id="newPogName" placeholder="Name (e.g. COSMETICS)">
                 <input type="text" id="newPogDims" placeholder="Dimensions (e.g. 12x78)">
                 <input type="text" id="newPogSuffix" placeholder="Suffix (e.g. GO)">
+                <select id="newPogType" style="padding:5px;">
+                    <option value="standard">Standard (Sections / Shelves)</option>
+                    <option value="location">Location Only (e.g. MAG)</option>
+                </select>
+                <label style="font-size:12px; color:#64748b; margin-top:6px;">Replaces planogram (optional)</label>
+                <select id="newPogPredecessor" style="padding:5px;">
+                    <option value="">— None (new planogram) —</option>
+                </select>
+                <small style="color:#94a3b8;">If set, items from the replaced planogram that aren't on this one will be demoted to MAG (free-floating) on push.</small>
             </div>
             <div style="margin-top:15px; display:flex; gap:10px;">
                 <button class="primary" onclick="submitCreatePog()">Create</button>
                 <button onclick="document.getElementById('createPogModal').style.display='none'">Cancel</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- EDIT POG METADATA MODAL -->
+    <div id="editPogMetaModal" style="display:none; position:fixed; top:0; left:0; width:100%; height:100%; background:rgba(0,0,0,0.5); justify-content:center; align-items:center; z-index: 1000;">
+        <div class="card" style="width:420px; background:#fff;">
+            <h3>Edit Planogram Metadata</h3>
+            <div style="display:flex; flex-direction:column; gap:10px; margin-top:15px;">
+                <input type="text" id="editPogId" placeholder="POG ID">
+                <input type="text" id="editPogName" placeholder="Name">
+                <input type="text" id="editPogDims" placeholder="Dimensions">
+                <input type="text" id="editPogSuffix" placeholder="Suffix">
+                <select id="editPogType" style="padding:5px;">
+                    <option value="standard">Standard (Sections / Shelves)</option>
+                    <option value="location">Location Only (e.g. MAG)</option>
+                </select>
+                <label style="font-size:12px; color:#64748b; margin-top:6px;">Replaces planogram (optional)</label>
+                <select id="editPogPredecessor" style="padding:5px;">
+                    <option value="">— None —</option>
+                </select>
+                <small style="color:#94a3b8;">If set, items from the replaced planogram that aren't on this one will be demoted to MAG on push.</small>
+            </div>
+            <div style="margin-top:15px; display:flex; gap:10px;">
+                <button class="primary" onclick="submitEditPogMeta()">Save</button>
+                <button onclick="document.getElementById('editPogMetaModal').style.display='none'">Cancel</button>
             </div>
         </div>
     </div>
@@ -715,12 +1161,74 @@
         let stores = [];
         let activePushType = '';
 
+        // ────────────────────────────────────────────────
+        //  GLOBAL UI HELPERS
+        // ────────────────────────────────────────────────
+
+        function showToast(message, type = 'info', duration = 3800) {
+            const icons = { success: '✓', error: '✕', warning: '⚠', info: 'ℹ' };
+            const t = document.createElement('div');
+            t.className = `toast ${type}`;
+            t.innerHTML = `<span class="toast-icon">${icons[type] || 'ℹ'}</span><span>${message}</span>`;
+            document.getElementById('toast-container').appendChild(t);
+            requestAnimationFrame(() => requestAnimationFrame(() => t.classList.add('show')));
+            setTimeout(() => { t.classList.remove('show'); setTimeout(() => t.remove(), 300); }, duration);
+        }
+
+        function showConfirm(title, message) {
+            return new Promise(resolve => {
+                document.getElementById('confirm-title').textContent = title;
+                document.getElementById('confirm-message').textContent = message;
+                const overlay = document.getElementById('confirm-overlay');
+                overlay.classList.add('open');
+                const yes = document.getElementById('confirm-yes-btn');
+                const no  = document.getElementById('confirm-no-btn');
+                const done = (result) => { overlay.classList.remove('open'); yes.onclick = null; no.onclick = null; resolve(result); };
+                yes.onclick = () => done(true);
+                no.onclick  = () => done(false);
+            });
+        }
+
+        function tableLoading(tbodySelector) {
+            const tb = document.querySelector(tbodySelector);
+            if (tb) tb.innerHTML = '<tr class="tbl-loading"><td colspan="20"><span class="spinner"></span>Loading…</td></tr>';
+        }
+
+        function tableEmpty(tbodySelector, message = 'No records found.') {
+            const tb = document.querySelector(tbodySelector);
+            if (tb) tb.innerHTML = `<tr class="tbl-empty"><td colspan="20">${message}</td></tr>`;
+        }
+
+        // Override native alert() → toast
+        window.alert = function(msg) {
+            if (msg === undefined || msg === null) return;
+            const s = String(msg).toLowerCase();
+            const type =
+                s.includes('error') || s.includes('fail') || s.includes('denied') || s.includes('invalid') || s.includes('could not') ? 'error' :
+                s.includes('required') || s.includes('select ') || s.includes('enter ') || s.includes('provide') || s.includes('must') ? 'warning' :
+                s.includes('success') || s.includes('pushed') || s.includes('saved') || s.includes('added') ||
+                s.includes('created') || s.includes('deleted') || s.includes('updated') || s.includes('synced') ||
+                s.includes('complete') || s.includes('sent') || s.includes('recorded') || s.includes('received') ? 'success' :
+                'info';
+            showToast(String(msg), type);
+        };
+
+        // ────────────────────────────────────────────────
+        //  API FETCH (with error surfacing)
+        // ────────────────────────────────────────────────
         async function apiFetch(url, options = {}) {
             if (!options.headers) options.headers = {};
             options.headers['X-Store-ID'] = currentStoreId;
             if (options.body && !options.headers['Content-Type']) options.headers['Content-Type'] = 'application/json';
-            const res = await fetch(url, options);
-            return res.json();
+            try {
+                const res = await fetch(url, options);
+                const data = await res.json();
+                if (!res.ok && data && data.message) showToast(data.message, 'error');
+                return data;
+            } catch (err) {
+                showToast('Network error: ' + err.message, 'error');
+                return {};
+            }
         }
 
         function switchModule(module, navItem) {
@@ -740,6 +1248,9 @@
             if(module === 'schedule') loadSchedule();
             if(module === 'promotions') loadPromotions();
             if(module === 'tasks') loadTasks('OPEN');
+            if(module === 'prp') loadPrp('OPEN');
+            if(module === 'vendors') loadVendors();
+            if(module === 'reports') loadReportsModule();
         }
 
         function switchTab(tabId, tabEl) {
@@ -757,6 +1268,8 @@
             document.getElementById('empContextLabel').innerText = 'Context: Store #' + id;
             document.getElementById('logContextLabel').innerText = 'Context: Store #' + id;
             document.getElementById('orderContextLabel').innerText = 'Context: Store #' + id;
+            document.getElementById('trkContextLabel').innerText = 'Context: Store #' + id;
+            document.getElementById('reorderContextLabel').innerText = 'Context: Store #' + id;
             if(document.getElementById('mi-local').style.display !== 'none') loadLocalInventory();
             if(document.getElementById('module-employees').style.display !== 'none') loadEmployees();
             if(document.getElementById('module-audit-logs').style.display !== 'none') loadLogs();
@@ -786,7 +1299,7 @@
         }
 
         async function deleteOrder(id) {
-            if (confirm('Permanently delete Order #' + id + '?')) {
+            if (await showConfirm('Delete Order', 'Permanently delete Order #' + id + '?')) {
                 const res = await apiFetch('/api/bopis/order/' + id, { method: 'DELETE' });
                 if (res.success) loadOnlineOrders();
             }
@@ -890,8 +1403,18 @@
             renderMasterInventory();
         }
 
+        function filterMasterInventory() {
+            currentMasterPage = 1;
+            renderMasterInventory();
+        }
+
         function changeMasterPage(dir) {
-            const maxPage = Math.ceil(masterItemsCache.length / 500);
+            const query = (document.getElementById('masterSearchInput')?.value || '').toLowerCase();
+            const filtered = query ? masterItemsCache.filter(i =>
+                (i.sku||'').toLowerCase().includes(query) || (i.upc||'').toLowerCase().includes(query) ||
+                (i.name||'').toLowerCase().includes(query) || (i.department||'').toLowerCase().includes(query)
+            ) : masterItemsCache;
+            const maxPage = Math.ceil(filtered.length / 500);
             if (currentMasterPage + dir >= 1 && currentMasterPage + dir <= maxPage) {
                 currentMasterPage += dir;
                 renderMasterInventory();
@@ -899,15 +1422,21 @@
         }
 
         function renderMasterInventory() {
-            document.getElementById('masterContextLabel').innerText = `District-wide SKU authority. Total items: ${masterItemsCache.length}`;
-            document.getElementById('masterPageLabel').innerText = `Page ${currentMasterPage} of ${Math.ceil(masterItemsCache.length / 500) || 1}`;
-            
+            const query = (document.getElementById('masterSearchInput')?.value || '').toLowerCase();
+            const filtered = query ? masterItemsCache.filter(i =>
+                (i.sku||'').toLowerCase().includes(query) || (i.upc||'').toLowerCase().includes(query) ||
+                (i.name||'').toLowerCase().includes(query) || (i.department||'').toLowerCase().includes(query)
+            ) : masterItemsCache;
+
+            document.getElementById('masterContextLabel').innerText = `District-wide SKU authority. Total items: ${masterItemsCache.length}${query ? ` (${filtered.length} matching)` : ''}`;
+            document.getElementById('masterPageLabel').innerText = `Page ${currentMasterPage} of ${Math.ceil(filtered.length / 500) || 1}`;
+
             const startIdx = (currentMasterPage - 1) * 500;
             const endIdx = startIdx + 500;
-            
+
             const tb = document.querySelector('#masterInvTable tbody');
             let rowsHtml = '';
-            masterItemsCache.slice(startIdx, endIdx).forEach(i => {
+            filtered.slice(startIdx, endIdx).forEach(i => {
                 const safeName = (i.name || '').replace(/'/g, "\\'").replace(/"/g, '&quot;');
                 const safeDept = (i.department || '').replace(/'/g, "\\'").replace(/"/g, '&quot;');
                 rowsHtml += `<tr>
@@ -977,8 +1506,18 @@
             renderLocalInventory();
         }
 
+        function filterLocalInventory() {
+            currentLocalPage = 1;
+            renderLocalInventory();
+        }
+
         function changeLocalPage(dir) {
-            const maxPage = Math.ceil(localItemsCache.length / 500);
+            const query = (document.getElementById('localSearchInput')?.value || '').toLowerCase();
+            const filtered = query ? localItemsCache.filter(i =>
+                (i.sku||'').toLowerCase().includes(query) || (i.upc||'').toLowerCase().includes(query) ||
+                (i.name||'').toLowerCase().includes(query) || (i.department||'').toLowerCase().includes(query)
+            ) : localItemsCache;
+            const maxPage = Math.ceil(filtered.length / 500);
             if (currentLocalPage + dir >= 1 && currentLocalPage + dir <= maxPage) {
                 currentLocalPage += dir;
                 renderLocalInventory();
@@ -986,14 +1525,40 @@
         }
 
         function renderLocalInventory() {
-            document.getElementById('localPageLabel').innerText = `Page ${currentLocalPage} of ${Math.ceil(localItemsCache.length / 500) || 1}`;
-            
+            const query = (document.getElementById('localSearchInput')?.value || '').trim();
+            let filtered = localItemsCache;
+            if (query) {
+                // Price filters: $0.01, <1.00, >5.00, <=2, >=10
+                const priceMatch = query.match(/^([<>]=?|=|\$)\s*(\d+\.?\d*)$/);
+                if (priceMatch) {
+                    const op = priceMatch[1];
+                    const val = parseFloat(priceMatch[2]);
+                    filtered = localItemsCache.filter(i => {
+                        const p = parseFloat(i.price) || 0;
+                        if (op === '$' || op === '=') return p === val;
+                        if (op === '<') return p < val;
+                        if (op === '>') return p > val;
+                        if (op === '<=') return p <= val;
+                        if (op === '>=') return p >= val;
+                        return false;
+                    });
+                } else {
+                    const q = query.toLowerCase();
+                    filtered = localItemsCache.filter(i =>
+                        (i.sku||'').toLowerCase().includes(q) || (i.upc||'').toLowerCase().includes(q) ||
+                        (i.name||'').toLowerCase().includes(q) || (i.department||'').toLowerCase().includes(q)
+                    );
+                }
+            }
+
+            document.getElementById('localPageLabel').innerText = `Page ${currentLocalPage} of ${Math.ceil(filtered.length / 500) || 1}`;
+
             const startIdx = (currentLocalPage - 1) * 500;
             const endIdx = startIdx + 500;
-            
+
             const tb = document.querySelector('#localInvTable tbody');
             let rowsHtml = '';
-            localItemsCache.slice(startIdx, endIdx).forEach(i => {
+            filtered.slice(startIdx, endIdx).forEach(i => {
                 const safeName = (i.name || '').replace(/'/g, "\\'").replace(/"/g, '&quot;');
                 const safeDept = (i.department || '').replace(/'/g, "\\'").replace(/"/g, '&quot;');
                 const safeLoc = (i.location || 'N/A').replace(/'/g, "\\'").replace(/"/g, '&quot;');
@@ -1001,6 +1566,7 @@
                 const safePogInfo = (i.pog_info || '').replace(/'/g, "\\'").replace(/"/g, '&quot;');
                 rowsHtml += `<tr>
                     <td>${i.sku}</td><td>${i.upc || '-'}</td><td>${i.name}</td><td>${i.department}</td><td>${i.quantity}</td>
+                    <td>${i.quantity_backstock || 0}</td>
                     <td>${i.pack_size} <span class="action-link" onclick="editPackSize('${i.sku}', ${i.pack_size})">EDIT</span></td>
                     <td>$${i.price}</td>
                     <td>
@@ -1039,6 +1605,14 @@
 
         async function deleteLocalItem(sku) { if(confirm('Delete local item ' + sku + '?')) { await apiFetch('/api/inventory/local/delete', { method: 'POST', body: JSON.stringify({ sku }) }); loadLocalInventory(); } }
 
+        async function clearMasterInventory() {
+            if (confirm('CRITICAL: This will delete ALL items from the Global Master List, including all pricing event references. This cannot be undone. Continue?')) {
+                const res = await apiFetch('/api/inventory/master/clear', { method: 'POST' });
+                alert(res.message);
+                loadMasterInventory();
+            }
+        }
+
         async function clearLocalInventory() {
             if (confirm('CRITICAL: This will delete ALL items from this store-specific list. Continue?')) {
                 const res = await apiFetch('/api/inventory/local/clear', { method: 'POST' });
@@ -1075,6 +1649,61 @@
         let currentPogId = null;
         let currentPogMeta = null;
 
+        // --- POG TAB SWITCHING ---
+        function switchPogTab(tabId, tabEl) {
+            document.querySelectorAll('.pog-tab-section').forEach(s => s.style.display = 'none');
+            document.querySelectorAll('#module-pogs .tab').forEach(t => t.classList.remove('active'));
+            document.getElementById(tabId).style.display = 'block';
+            tabEl.classList.add('active');
+            if (tabId === 'pog-cc-schedule') loadCycleCountSchedule();
+        }
+
+        const dayNames = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+
+        async function loadCycleCountSchedule() {
+            // Populate planogram dropdown
+            const pogs = await apiFetch('/api/pogs');
+            const sel = document.getElementById('ccPogSelect');
+            sel.innerHTML = '<option value="">Select Planogram...</option>';
+            pogs.forEach(p => { sel.innerHTML += `<option value="${p.id}">${p.pog_id} - ${p.name}</option>`; });
+
+            // Load schedule
+            const schedule = await apiFetch('/api/cyclecount/schedule');
+            const tb = document.querySelector('#ccScheduleTable tbody'); tb.innerHTML = '';
+            if (schedule.length === 0) {
+                tb.innerHTML = '<tr class="tbl-empty"><td colspan="4">No cycle count assignments yet.</td></tr>';
+            } else {
+                schedule.forEach(s => {
+                    tb.innerHTML += `<tr>
+                        <td>${s.pog_name} (${s.pog_id})</td>
+                        <td>${s.section}</td>
+                        <td>${dayNames[s.day_of_week]}</td>
+                        <td><span class="action-link delete" onclick="deleteCycleCountAssignment(${s.id})">DELETE</span></td>
+                    </tr>`;
+                });
+            }
+        }
+
+        async function addCycleCountAssignment() {
+            const planogram_id = document.getElementById('ccPogSelect').value;
+            const section = document.getElementById('ccSectionSelect').value;
+            const day_of_week = document.getElementById('ccDaySelect').value;
+            if (!planogram_id) return alert('Select a planogram.');
+            const res = await apiFetch('/api/cyclecount/schedule', { method: 'POST', body: JSON.stringify({ planogram_id: parseInt(planogram_id), section, day_of_week: parseInt(day_of_week) }) });
+            if (res.success) loadCycleCountSchedule();
+            else alert('Error: ' + res.message);
+        }
+
+        async function deleteCycleCountAssignment(id) {
+            const res = await apiFetch(`/api/cyclecount/schedule/${id}`, { method: 'DELETE' });
+            if (res.success) loadCycleCountSchedule();
+        }
+
+        async function printTodayCountSheets() {
+            const res = await apiFetch('/api/reports/cyclecount/print', { method: 'POST', body: JSON.stringify({ storeId: currentStoreId }) });
+            alert(res.success ? res.message : (res.message || 'Error printing count sheets.'));
+        }
+
         async function loadPogs() {
             const pogs = await apiFetch('/api/pogs');
             const tb = document.querySelector('#pogsTable tbody'); tb.innerHTML = '';
@@ -1082,17 +1711,28 @@
                 tb.innerHTML += `<tr>
                     <td>${p.pog_id}</td><td>${p.name}</td><td>${p.dimensions}</td><td>${p.suffix}</td><td>${new Date(p.created_at).toLocaleDateString()}</td>
                     <td>
-                        <span class="action-link" onclick="editPog(${p.id}, '${p.pog_id}', '${p.name}', '${p.dimensions}', '${p.suffix}')">EDIT</span>
+                        <span class="action-link" onclick="editPog(${p.id}, '${p.pog_id}', '${p.name}', '${p.dimensions}', '${p.suffix}', '${p.pog_type || 'standard'}')">EDIT</span>
                         <span class="action-link delete" onclick="deletePog(${p.id})">DEL</span>
                     </td>
                 </tr>`;
             });
         }
-        function openCreatePogModal() {
+        async function openCreatePogModal() {
             document.getElementById('newPogId').value = '';
             document.getElementById('newPogName').value = '';
             document.getElementById('newPogDims').value = '';
             document.getElementById('newPogSuffix').value = '';
+            document.getElementById('newPogType').value = 'standard';
+            const predSel = document.getElementById('newPogPredecessor');
+            predSel.innerHTML = '<option value="">— None (new planogram) —</option>';
+            try {
+                const pogs = await apiFetch('/api/pogs');
+                if (Array.isArray(pogs)) {
+                    pogs.forEach(p => {
+                        predSel.innerHTML += `<option value="${p.pog_id}">${p.pog_id} — ${p.name}${p.dimensions ? ' (' + p.dimensions + ')' : ''}</option>`;
+                    });
+                }
+            } catch (_) {}
             document.getElementById('createPogModal').style.display = 'flex';
         }
         async function submitCreatePog() {
@@ -1100,7 +1740,9 @@
                 pog_id: document.getElementById('newPogId').value,
                 name: document.getElementById('newPogName').value,
                 dimensions: document.getElementById('newPogDims').value,
-                suffix: document.getElementById('newPogSuffix').value
+                suffix: document.getElementById('newPogSuffix').value,
+                pog_type: document.getElementById('newPogType').value,
+                predecessor_pog_id: document.getElementById('newPogPredecessor').value || null
             };
             if(!body.pog_id || !body.name) return alert('POG ID and Name required.');
             await apiFetch('/api/pogs', { method: 'POST', body: JSON.stringify(body) });
@@ -1113,14 +1755,70 @@
                 loadPogs();
             }
         }
-        function editPog(id, pog_id, name, dims, suffix) {
+        function editPog(id, pog_id, name, dims, suffix, pog_type) {
             currentPogId = id;
-            currentPogMeta = { pog_id, name, dims, suffix };
+            currentPogMeta = { pog_id, name, dims, suffix, pog_type: pog_type || 'standard' };
             document.getElementById('pogEditorHeader').innerText = `Planogram # ${pog_id} - ${name} - ${dims} - ${suffix}`;
             document.getElementById('pog-list-view').style.display = 'none';
             document.getElementById('pog-editor-view').style.display = 'block';
+            const isLocation = currentPogMeta.pog_type === 'location';
+            document.getElementById('pogSectionShelfBar').style.display = isLocation ? 'none' : 'flex';
+            document.getElementById('pogLocationBar').style.display = isLocation ? 'flex' : 'none';
             loadPogItems();
         }
+        async function openEditPogMetaModal() {
+            if (!currentPogId || !currentPogMeta) return alert('Open a planogram first.');
+            // Fetch the full record so we get predecessor_pog_id too (currentPogMeta doesn't carry it).
+            let full = currentPogMeta;
+            try {
+                const all = await apiFetch('/api/pogs');
+                if (Array.isArray(all)) {
+                    const match = all.find(p => p.id === currentPogId);
+                    if (match) full = match;
+                }
+            } catch (_) {}
+            document.getElementById('editPogId').value = full.pog_id || '';
+            document.getElementById('editPogName').value = full.name || '';
+            document.getElementById('editPogDims').value = full.dimensions || full.dims || '';
+            document.getElementById('editPogSuffix').value = full.suffix || '';
+            document.getElementById('editPogType').value = full.pog_type || 'standard';
+            const predSel = document.getElementById('editPogPredecessor');
+            predSel.innerHTML = '<option value="">— None —</option>';
+            try {
+                const pogs = await apiFetch('/api/pogs');
+                if (Array.isArray(pogs)) {
+                    pogs.forEach(p => {
+                        if (p.id === currentPogId) return; // can't be its own predecessor
+                        const selected = (full.predecessor_pog_id && p.pog_id === full.predecessor_pog_id) ? 'selected' : '';
+                        predSel.innerHTML += `<option value="${p.pog_id}" ${selected}>${p.pog_id} — ${p.name}${p.dimensions ? ' (' + p.dimensions + ')' : ''}</option>`;
+                    });
+                }
+            } catch (_) {}
+            document.getElementById('editPogMetaModal').style.display = 'flex';
+        }
+
+        async function submitEditPogMeta() {
+            const body = {
+                pog_id: document.getElementById('editPogId').value.trim(),
+                name: document.getElementById('editPogName').value.trim(),
+                dimensions: document.getElementById('editPogDims').value.trim(),
+                suffix: document.getElementById('editPogSuffix').value.trim(),
+                pog_type: document.getElementById('editPogType').value,
+                predecessor_pog_id: document.getElementById('editPogPredecessor').value || null
+            };
+            if (!body.pog_id || !body.name) return alert('POG ID and Name required.');
+            const res = await apiFetch('/api/pogs/' + currentPogId, { method: 'PUT', body: JSON.stringify(body) });
+            if (res && res.success) {
+                // Reflect in the editor header + cached meta
+                currentPogMeta = { pog_id: body.pog_id, name: body.name, dims: body.dimensions, suffix: body.suffix, pog_type: body.pog_type };
+                document.getElementById('pogEditorHeader').innerText = `Planogram # ${body.pog_id} - ${body.name} - ${body.dimensions} - ${body.suffix}`;
+                document.getElementById('editPogMetaModal').style.display = 'none';
+                loadPogs();
+            } else {
+                alert('Failed: ' + (res && res.message ? res.message : 'unknown error'));
+            }
+        }
+
         function closePogEditor() {
             document.getElementById('pog-editor-view').style.display = 'none';
             document.getElementById('pog-list-view').style.display = 'block';
@@ -1143,27 +1841,125 @@
             });
             if (!res || !res.success) alert('Print failed: ' + (res?.message || 'Unknown error'));
         }
+
+        async function printLocationBarcode() {
+            if (!currentPogMeta) return;
+            const res = await apiFetch('/api/print_location_barcode', {
+                method: 'POST',
+                body: JSON.stringify({
+                    pog_id: currentPogMeta.pog_id,
+                    name: currentPogMeta.name,
+                    dims: currentPogMeta.dims,
+                    suffix: currentPogMeta.suffix
+                })
+            });
+            if (!res || !res.success) alert('Print failed: ' + (res?.message || 'Unknown error'));
+        }
         async function loadPogItems() {
             if(!currentPogId) return;
-            const section = document.getElementById('pogSectionSelect').value;
-            const shelf = document.getElementById('pogShelfSelect').value;
+            const isLocation = currentPogMeta && currentPogMeta.pog_type === 'location';
             const items = await apiFetch(`/api/pogs/${currentPogId}/items`);
-            
+
             const tb = document.querySelector('#pogItemsTable tbody'); tb.innerHTML = '';
-            const filteredItems = items.filter(i => i.section === section && i.shelf === shelf);
-            
-            filteredItems.forEach(i => {
-                tb.innerHTML += `<tr>
-                    <td>${i.sku}</td><td>${i.upc || '-'}</td><td>${i.name}</td>
+            let displayItems;
+            if (isLocation) {
+                displayItems = items;
+            } else {
+                const section = document.getElementById('pogSectionSelect').value;
+                const shelf = document.getElementById('pogShelfSelect').value;
+                displayItems = items.filter(i => i.section === section && i.shelf === shelf);
+            }
+            // Sort by position so drag order is stable.
+            displayItems.sort((a, b) => (a.position || 0) - (b.position || 0));
+
+            displayItems.forEach(i => {
+                const tr = document.createElement('tr');
+                tr.setAttribute('draggable', 'true');
+                tr.dataset.itemId = i.id;
+                tr.style.cursor = 'move';
+                const globalPos = i.global_position != null ? i.global_position : '—';
+                tr.innerHTML = `
+                    <td><span style="color:#94a3b8; margin-right:6px;" title="Drag to reorder">⋮⋮</span>${i.sku}</td>
+                    <td>${i.upc || '-'}</td>
+                    <td>${i.name}</td>
                     <td>
                         <input type="text" value="${i.faces}" style="width: 40px; text-align: center;" onchange="updatePogItemDetail(${i.id}, this.value, ${i.position}, '${i.sku}')">
                     </td>
-                    <td>
-                        <input type="number" value="${i.position}" style="width: 50px; text-align: center;" onchange="updatePogItemDetail(${i.id}, '${i.faces}', this.value, '${i.sku}')">
+                    <td style="text-align:center;">
+                        <strong style="font-size:14px;">${globalPos}</strong>
+                        <br><small style="color:#94a3b8;">shelf ${i.position}</small>
                     </td>
-                    <td><span class="action-link delete" onclick="removePogItem(${i.id})">REMOVE</span></td>
-                </tr>`;
+                    <td><span class="action-link delete" onclick="removePogItem(${i.id})">REMOVE</span></td>`;
+                tb.appendChild(tr);
             });
+
+            enablePogItemDragDrop();
+        }
+
+        // --- Drag-and-drop reordering for planogram items ---
+        let pogDragSrcRow = null;
+
+        function enablePogItemDragDrop() {
+            const tb = document.querySelector('#pogItemsTable tbody');
+            tb.querySelectorAll('tr').forEach(row => {
+                row.addEventListener('dragstart', pogDragStart);
+                row.addEventListener('dragover', pogDragOver);
+                row.addEventListener('drop', pogDrop);
+                row.addEventListener('dragend', pogDragEnd);
+                row.addEventListener('dragleave', pogDragLeave);
+            });
+        }
+
+        function pogDragStart(e) {
+            pogDragSrcRow = this;
+            this.style.opacity = '0.4';
+            e.dataTransfer.effectAllowed = 'move';
+            e.dataTransfer.setData('text/plain', this.dataset.itemId);
+        }
+
+        function pogDragOver(e) {
+            if (e.preventDefault) e.preventDefault();
+            e.dataTransfer.dropEffect = 'move';
+            if (this !== pogDragSrcRow) this.style.borderTop = '2px solid #8b5cf6';
+            return false;
+        }
+
+        function pogDragLeave() {
+            this.style.borderTop = '';
+        }
+
+        async function pogDrop(e) {
+            if (e.stopPropagation) e.stopPropagation();
+            this.style.borderTop = '';
+            if (pogDragSrcRow && pogDragSrcRow !== this) {
+                const tb = document.querySelector('#pogItemsTable tbody');
+                tb.insertBefore(pogDragSrcRow, this);
+                // Persist new order
+                const orderedIds = Array.from(tb.querySelectorAll('tr')).map(r => parseInt(r.dataset.itemId));
+                try {
+                    const res = await apiFetch(`/api/pogs/${currentPogId}/items/reorder`, {
+                        method: 'PUT',
+                        body: JSON.stringify({ orderedIds })
+                    });
+                    if (!res || !res.success) {
+                        alert('Reorder failed: ' + (res?.message || 'unknown'));
+                        loadPogItems();
+                    } else {
+                        // Refresh to show new position numbers
+                        loadPogItems();
+                    }
+                } catch (err) {
+                    alert('Reorder error: ' + err.message);
+                    loadPogItems();
+                }
+            }
+            return false;
+        }
+
+        function pogDragEnd() {
+            this.style.opacity = '1';
+            document.querySelectorAll('#pogItemsTable tbody tr').forEach(r => r.style.borderTop = '');
+            pogDragSrcRow = null;
         }
 
         let masterInventoryCache = [];
@@ -1208,22 +2004,39 @@
         }
 
         async function addMasterItemToPog(sku) {
-            const section = document.getElementById('pogSectionSelect').value;
-            const shelf = document.getElementById('pogShelfSelect').value;
-            await apiFetch(`/api/pogs/${currentPogId}/items`, { 
-                method: 'POST', 
-                body: JSON.stringify({ sku, section, shelf, faces: 'F1', position: 1 }) 
+            const isLocation = currentPogMeta && currentPogMeta.pog_type === 'location';
+            // Omit position so the server assigns next-available (max+1 within this section/shelf).
+            const body = { sku, faces: 'F1' };
+            if (!isLocation) {
+                body.section = document.getElementById('pogSectionSelect').value;
+                body.shelf = document.getElementById('pogShelfSelect').value;
+            }
+            await apiFetch(`/api/pogs/${currentPogId}/items`, {
+                method: 'POST',
+                body: JSON.stringify(body)
             });
-            document.getElementById('addPogItemModal').style.display = 'none';
+            // Flash the row green to confirm add, keep modal open
+            const btn = document.querySelector(`#pogMasterSelectTable button[onclick="addMasterItemToPog('${sku}')"]`);
+            if (btn) {
+                const row = btn.closest('tr');
+                row.style.background = '#bbf7d0';
+                btn.textContent = 'Added';
+                btn.disabled = true;
+                setTimeout(() => { row.style.background = ''; btn.textContent = 'Add'; btn.disabled = false; }, 1500);
+            }
             loadPogItems();
         }
 
         async function updatePogItemDetail(itemId, faces, position, sku) {
-            const section = document.getElementById('pogSectionSelect').value;
-            const shelf = document.getElementById('pogShelfSelect').value;
-            await apiFetch(`/api/pogs/${currentPogId}/items`, { 
-                method: 'POST', 
-                body: JSON.stringify({ sku, section, shelf, faces, position: parseInt(position) }) 
+            const isLocation = currentPogMeta && currentPogMeta.pog_type === 'location';
+            const body = { sku, faces, position: parseInt(position) };
+            if (!isLocation) {
+                body.section = document.getElementById('pogSectionSelect').value;
+                body.shelf = document.getElementById('pogShelfSelect').value;
+            }
+            await apiFetch(`/api/pogs/${currentPogId}/items`, {
+                method: 'POST',
+                body: JSON.stringify(body)
             });
         }
         async function removePogItem(itemId) {
@@ -1380,6 +2193,7 @@
                         <span class="action-link" onclick="editPriceEvent(${e.id}, '${e.name.replace(/'/g, "\\'")}', '${e.type}', '${(e.description || '').replace(/'/g, "\\'")}')">EDIT</span>
                         <span class="action-link" style="color: #27ae60;" onclick="openPushModal(${e.id}, 'PUSH')">PUSH</span>
                         ${e.type !== 'MOS' ? `<span class="action-link" style="color: #e67e22;" onclick="openPushModal(${e.id}, 'REVERT')">REVERT</span>` : ''}
+                        ${statusStr === 'PUSHED' ? `<span class="action-link" style="color: #8b5cf6;" onclick="printPriceReport(${e.id})">PRINT REPORT</span>` : ''}
                     </td>
                 </tr>`;
             });
@@ -1408,6 +2222,11 @@
             renderEventQueue();
             document.getElementById('createEventModal').style.display = 'flex';
         }
+        async function printPriceReport(eventId) {
+            const res = await apiFetch('/api/reports/price-change', { method: 'POST', body: JSON.stringify({ eventId }) });
+            alert(res.success ? 'Price change report sent to printer.' : ('Error: ' + res.message));
+        }
+
         async function deletePriceEvent(eventId) {
             if(confirm('Permanently delete this reverted pricing event?')) {
                 const res = await apiFetch('/api/inventory/event/delete', { 
@@ -1447,20 +2266,22 @@
             document.getElementById('eventItemPrice').value = '';
             renderEventQueue();
         }
-        let eventMasterInventoryCache = [];
-        async function openEventAddItemModal() {
-            if (masterInventoryCache.length === 0) {
-                masterInventoryCache = await apiFetch('/api/inventory/master');
-            }
-            eventMasterInventoryCache = masterInventoryCache;
-            renderEventMasterList(eventMasterInventoryCache);
+        let eventMasterSearchTimer = null;
+        function openEventAddItemModal() {
             document.getElementById('addEventItemModal').style.display = 'flex';
-            document.getElementById('eventItemSearch').value = '';
-            document.getElementById('eventItemSearch').focus();
+            const searchEl = document.getElementById('eventItemSearch');
+            searchEl.value = '';
+            document.querySelector('#eventMasterSelectTable tbody').innerHTML =
+                '<tr><td colspan="5" style="text-align:center;padding:16px;color:#94a3b8;">Type to search the master inventory...</td></tr>';
+            setTimeout(() => searchEl.focus(), 50);
         }
 
         function renderEventMasterList(items) {
             const tb = document.querySelector('#eventMasterSelectTable tbody');
+            if (items.length === 0) {
+                tb.innerHTML = '<tr><td colspan="5" style="text-align:center;padding:16px;color:#94a3b8;">No items found.</td></tr>';
+                return;
+            }
             tb.innerHTML = '';
             items.forEach(i => {
                 const targetId = i.sku || i.upc;
@@ -1471,14 +2292,20 @@
             });
         }
 
-        function filterEventMasterItems() {
-            const search = document.getElementById('eventItemSearch').value.toLowerCase();
-            const filtered = eventMasterInventoryCache.filter(i => 
-                (i.sku && i.sku.toLowerCase().includes(search)) || 
-                (i.name && i.name.toLowerCase().includes(search)) ||
-                (i.upc && i.upc.toLowerCase().includes(search))
-            );
-            renderEventMasterList(filtered);
+        async function filterEventMasterItems() {
+            const q = document.getElementById('eventItemSearch').value.trim();
+            clearTimeout(eventMasterSearchTimer);
+            if (!q) {
+                document.querySelector('#eventMasterSelectTable tbody').innerHTML =
+                    '<tr><td colspan="5" style="text-align:center;padding:16px;color:#94a3b8;">Type to search the master inventory...</td></tr>';
+                return;
+            }
+            eventMasterSearchTimer = setTimeout(async () => {
+                document.querySelector('#eventMasterSelectTable tbody').innerHTML =
+                    '<tr><td colspan="5" style="text-align:center;padding:16px;color:#64748b;">Searching...</td></tr>';
+                const items = await apiFetch(`/api/inventory/master?q=${encodeURIComponent(q)}`);
+                renderEventMasterList(items);
+            }, 250);
         }
 
         function selectItemForEvent(sku, currentPrice) {
@@ -1514,8 +2341,9 @@
         // --- TRUCK RECEIVING FLOW ---
         let plannedTruckItems = [];
 
-        async function loadManifests() {
-            const trks = await apiFetch('/api/bopis/manifests');
+        async function loadManifests(page = 1) {
+            const data = await apiFetch(`/api/bopis/manifests?page=${page}&limit=25`);
+            const trks = data.rows || data;
             const tb = document.querySelector('#manifestsTable tbody'); tb.innerHTML = '';
             trks.forEach(t => {
                 const statusColor = t.status === 'COMPLETED' ? '#2ecc71' : (t.status === 'RECEIVING' ? '#f1c40f' : '#3498db');
@@ -1526,6 +2354,13 @@
                     <td><span class="action-link" onclick="openManifestDetails(${t.id}, '${t.manifest_number}')">VIEW</span></td>
                 </tr>`;
             });
+            if (data.totalPages) {
+                const pg = document.getElementById('manifestsPagination');
+                pg.innerHTML = `
+                    <button onclick="loadManifests(${page - 1})" ${page <= 1 ? 'disabled' : ''}>Prev</button>
+                    <span>Page ${data.page} of ${data.totalPages} (${data.total} total)</span>
+                    <button onclick="loadManifests(${page + 1})" ${page >= data.totalPages ? 'disabled' : ''}>Next</button>`;
+            }
             document.getElementById('trkContextLabel').innerText = 'Context: Store #' + currentStoreId;
         }
 
@@ -1603,6 +2438,86 @@
                 loadManifests();
             } else { alert('Error: ' + res.message); }
         }
+        // --- TRUCK SUB-TAB SWITCHING ---
+        function switchTruckTab(tabId, tabEl) {
+            document.querySelectorAll('.trk-tab-section').forEach(s => s.style.display = 'none');
+            document.querySelectorAll('#module-truck-receiving .tab').forEach(t => t.classList.remove('active'));
+            document.getElementById(tabId).style.display = 'block';
+            tabEl.classList.add('active');
+            if (tabId === 'trk-reorders') loadReorders(1);
+        }
+
+        // --- AUTO REORDER FLOW ---
+        async function loadReorders(page = 1) {
+            const status = document.getElementById('reorderStatusFilter').value;
+            const qs = `page=${page}&limit=25${status ? '&status=' + status : ''}`;
+            const data = await apiFetch(`/api/reorders?${qs}`);
+            const rows = data.rows || [];
+            const tb = document.querySelector('#reordersTable tbody'); tb.innerHTML = '';
+            if (rows.length === 0) {
+                tb.innerHTML = '<tr class="tbl-empty"><td colspan="8">No reorders found.</td></tr>';
+            }
+            rows.forEach(r => {
+                const colors = { PENDING: '#3498db', ORDERED: '#f1c40f', RECEIVED: '#2ecc71', CANCELLED: '#95a5a6' };
+                tb.innerHTML += `<tr>
+                    <td>${r.sku}</td>
+                    <td>${r.name}</td>
+                    <td>${r.current_qty}</td>
+                    <td>${r.order_qty}</td>
+                    <td>${Math.ceil(r.order_qty / (r.pack_size || 6))}</td>
+                    <td><span style="font-weight:bold; color:${colors[r.status] || '#fff'}">${r.status}</span></td>
+                    <td>${new Date(r.created_at).toLocaleString()}</td>
+                    <td>${r.status === 'PENDING' ? `
+                        <span class="action-link" onclick="updateReorderStatus(${r.id}, 'ORDERED')">MARK ORDERED</span>
+                        <span class="action-link" onclick="updateReorderStatus(${r.id}, 'RECEIVED')">RECEIVED</span>
+                        <span class="action-link delete" onclick="updateReorderStatus(${r.id}, 'CANCELLED')">CANCEL</span>
+                    ` : (r.status === 'ORDERED' ? `
+                        <span class="action-link" onclick="updateReorderStatus(${r.id}, 'RECEIVED')">RECEIVED</span>
+                    ` : '')}
+                    <span class="action-link delete" onclick="deleteReorder(${r.id})">DELETE</span></td>
+                </tr>`;
+            });
+            if (data.totalPages) {
+                const pg = document.getElementById('reordersPagination');
+                pg.innerHTML = `
+                    <button onclick="loadReorders(${page - 1})" ${page <= 1 ? 'disabled' : ''}>Prev</button>
+                    <span>Page ${data.page} of ${data.totalPages} (${data.total} total)</span>
+                    <button onclick="loadReorders(${page + 1})" ${page >= data.totalPages ? 'disabled' : ''}>Next</button>`;
+            }
+            document.getElementById('reorderContextLabel').innerText = 'Context: Store #' + currentStoreId;
+        }
+
+        async function deleteReorder(id) {
+            if (!confirm('Delete this reorder?')) return;
+            const res = await apiFetch(`/api/reorders/${id}`, { method: 'DELETE' });
+            if (res.success) loadReorders(1);
+            else alert('Error: ' + res.message);
+        }
+
+        async function updateReorderStatus(id, status) {
+            const res = await apiFetch(`/api/reorders/${id}/status`, { method: 'POST', body: JSON.stringify({ status }) });
+            if (res.success) loadReorders(1);
+            else alert('Error: ' + res.message);
+        }
+
+        async function generateManifestFromReorders() {
+            const res = await apiFetch('/api/reorders/generate-manifest', { method: 'POST' });
+            if (res.success) {
+                alert(`Manifest ${res.manifest_number} created with ${res.items_count} items.\nBOL: ${res.bol_number}`);
+                loadManifests(1);
+                const tab = document.querySelector('#module-truck-receiving .tab');
+                switchTruckTab('trk-manifests', tab);
+            } else alert(res.message || 'No pending reorders to fulfill.');
+        }
+
+        async function triggerReorderCheck() {
+            const res = await apiFetch('/api/reorders/check-now', { method: 'POST' });
+            if (res.success) {
+                alert(`Reorder check complete: ${res.new_reorders} new reorder(s) created.`);
+                loadReorders(1);
+            } else alert('Error: ' + res.message);
+        }
+
         async function loadRolltainers() {
             const rts = await apiFetch('/api/bopis/rolltainers');
             const tb = document.querySelector('#rolltainersTable tbody'); tb.innerHTML = '';
@@ -1625,23 +2540,53 @@
         async function openManifestDetails(id, num) {
             const res = await apiFetch('/api/bopis/manifests/' + id);
             document.getElementById('viewDetailTitle').innerText = 'Manifest: ' + num;
+
+            // Show BOL barcode
+            const barcodeDiv = document.getElementById('viewDetailBarcode');
+            if (res.manifest.bol_number) {
+                barcodeDiv.innerHTML = '<svg id="bolBarcodeSvg"></svg>';
+                barcodeDiv.style.display = 'block';
+                JsBarcode('#bolBarcodeSvg', res.manifest.bol_number, { format: 'CODE128', width: 2, height: 50, displayValue: true, fontSize: 14 });
+            } else {
+                barcodeDiv.style.display = 'none';
+            }
+
             document.getElementById('viewDetailHeaders').innerHTML = '<th>SKU</th><th>Name</th><th>Expected (Boxes)</th><th>Received</th>';
             const tb = document.querySelector('#viewDetailTable tbody'); tb.innerHTML = '';
             res.items.forEach(i => {
                 tb.innerHTML += `<tr><td>${i.sku}</td><td>${i.name}</td><td>${i.expected_packs}</td><td>${i.received_packs}</td></tr>`;
             });
             document.getElementById('detailPrintBtn').onclick = () => apiFetch('/api/bopis/manifest/print/' + id, { method: 'POST' });
-            
+
+            const reportBtn = document.getElementById('detailPrintReportBtn');
+            reportBtn.style.display = 'inline-block';
+            reportBtn.onclick = async () => {
+                const r = await apiFetch('/api/bopis/manifest/print-report/' + id, { method: 'POST' });
+                alert(r.success ? 'Store copy sent to printer.' : ('Print error: ' + r.message));
+            };
+
+            const driverBtn = document.getElementById('detailPrintDriverBtn');
+            driverBtn.style.display = 'inline-block';
+            driverBtn.onclick = async () => {
+                const r = await apiFetch('/api/bopis/manifest/print-driver/' + id, { method: 'POST' });
+                alert(r.success ? 'Driver copy sent to printer.' : ('Print error: ' + r.message));
+            };
+
             const receiveBtn = document.getElementById('detailReceiveBtn');
+            const autoPrintLabel = document.getElementById('detailAutoPrintLabel');
             if (res.manifest.status !== 'COMPLETED') {
                 receiveBtn.style.display = 'block';
+                autoPrintLabel.style.display = 'flex';
+                document.getElementById('detailAutoPrint').checked = true;
                 receiveBtn.onclick = async () => {
                     const identifierText = res.manifest.bol_number ? 'BOL ' + res.manifest.bol_number : 'Manifest ' + res.manifest.manifest_number;
                     if (confirm('Acknowledge full shipment for ' + identifierText + '? This will move all items to Backstock.')) {
+                        const autoPrint = document.getElementById('detailAutoPrint').checked;
                         const bodyData = res.manifest.bol_number ? { bol_number: res.manifest.bol_number } : { manifest_id: res.manifest.id };
-                        const mres = await apiFetch('/api/bopis/manifest/master-receive', { 
-                            method: 'POST', 
-                            body: JSON.stringify(bodyData) 
+                        bodyData.print = autoPrint;
+                        const mres = await apiFetch('/api/bopis/manifest/master-receive', {
+                            method: 'POST',
+                            body: JSON.stringify(bodyData)
                         });
                         alert(mres.message);
                         document.getElementById('viewDetailModal').style.display = 'none';
@@ -1650,6 +2595,7 @@
                 };
             } else {
                 receiveBtn.style.display = 'none';
+                autoPrintLabel.style.display = 'none';
             }
 
             document.getElementById('viewDetailModal').style.display = 'flex';
@@ -1664,6 +2610,10 @@
                 tb.innerHTML += `<tr><td>${i.sku}</td><td>${i.name}</td><td>${i.qty_boxes}</td></tr>`;
             });
             document.getElementById('detailPrintBtn').onclick = () => apiFetch('/api/bopis/rolltainer/print/' + id, { method: 'POST' });
+            document.getElementById('viewDetailBarcode').style.display = 'none';
+            document.getElementById('detailPrintReportBtn').style.display = 'none';
+            document.getElementById('detailPrintDriverBtn').style.display = 'none';
+            document.getElementById('detailReceiveBtn').style.display = 'none';
             document.getElementById('viewDetailModal').style.display = 'flex';
         }
 
@@ -1752,6 +2702,38 @@
         function scheduleNav(direction) {
             scheduleCurrentDate.setDate(scheduleCurrentDate.getDate() + direction * 7);
             loadSchedule();
+        }
+
+        async function printWeeklySchedule() {
+            const dateStr = scheduleCurrentDate.toISOString().slice(0, 10);
+            const res = await apiFetch('/api/reports/schedule/weekly', { method: 'POST', body: JSON.stringify({ date: dateStr }) });
+            alert(res.success ? 'Weekly schedule sent to printer.' : ('Error: ' + res.message));
+        }
+
+        async function promptPrintIndividual() {
+            const employees = await apiFetch('/api/employees/local');
+            if (!employees || employees.length === 0) return alert('No employees found.');
+            const container = document.getElementById('printIndividualList');
+            container.innerHTML = '';
+            employees.forEach(e => {
+                const btn = document.createElement('div');
+                btn.style.cssText = 'padding:12px 16px; margin:6px 0; border:1px solid #e2e8f0; border-radius:8px; cursor:pointer; display:flex; justify-content:space-between; align-items:center; transition:background 0.15s;';
+                btn.onmouseenter = () => btn.style.background = '#f1f5f9';
+                btn.onmouseleave = () => btn.style.background = '';
+                btn.innerHTML = `<div><strong>${e.name}</strong><br><span style="color:#64748b; font-size:12px;">EID: ${e.eid} · ${e.role || 'SA'}</span></div><span style="color:#8e44ad; font-weight:bold; font-size:12px;">PRINT →</span>`;
+                btn.onclick = async () => {
+                    btn.innerHTML = '<span style="color:#64748b;">Sending to printer...</span>';
+                    const dateStr = scheduleCurrentDate.toISOString().slice(0, 10);
+                    const res = await apiFetch('/api/reports/schedule/individual', { method: 'POST', body: JSON.stringify({ eid: e.eid, date: dateStr }) });
+                    if (res.success) {
+                        btn.innerHTML = `<span style="color:#059669; font-weight:bold;">✓ ${e.name} — Sent to printer</span>`;
+                    } else {
+                        btn.innerHTML = `<span style="color:#ef4444;">Error: ${res.message}</span>`;
+                    }
+                };
+                container.appendChild(btn);
+            });
+            document.getElementById('printIndividualModal').style.display = 'flex';
         }
 
         async function loadSchedule() {
@@ -2088,6 +3070,283 @@
 
         // --- TASKS ---
         let tasksCurrentFilter = 'OPEN';
+        async function printOpeningReport() {
+            const res = await apiFetch('/api/reports/daily/opening', { method: 'POST', body: JSON.stringify({}) });
+            alert(res.success ? 'Opening report sent to printer.' : ('Error: ' + res.message));
+        }
+
+        async function printClosingReport() {
+            const res = await apiFetch('/api/reports/daily/closing', { method: 'POST', body: JSON.stringify({}) });
+            alert(res.success ? 'Closing report sent to printer.' : ('Error: ' + res.message));
+        }
+
+        // --- REPORTS MODULE ---
+        async function loadReportsModule() {
+            // Fill option controls that depend on live data.
+            try {
+                const emps = await apiFetch('/api/employees/local');
+                const sel = document.getElementById('rptIndividualEid');
+                sel.innerHTML = '<option value="">— Select employee —</option>';
+                if (Array.isArray(emps)) emps.forEach(e => sel.innerHTML += `<option value="${e.eid}">${e.name}</option>`);
+            } catch (_) {}
+            try {
+                const inv = await apiFetch('/api/inventory/local');
+                const depts = new Set();
+                if (Array.isArray(inv)) inv.forEach(i => i.department && depts.add(i.department));
+                const sel = document.getElementById('rptDepartment');
+                sel.innerHTML = '<option value="">— Select department —</option>';
+                Array.from(depts).sort().forEach(d => sel.innerHTML += `<option value="${d}">${d}</option>`);
+            } catch (_) {}
+            try {
+                const events = await apiFetch('/api/inventory/events');
+                const sel = document.getElementById('rptPriceEvent');
+                sel.innerHTML = '<option value="">— Select pricing event —</option>';
+                if (Array.isArray(events)) events.forEach(e => sel.innerHTML += `<option value="${e.id}">#${e.id} ${e.name} (${e.type})</option>`);
+            } catch (_) {}
+
+            // Completed reset signoffs available for reprint.
+            try {
+                const tasks = await apiFetch('/api/tasks');
+                const done = (Array.isArray(tasks) ? tasks : []).filter(t => t.task_type === 'POG_RESET' && t.status === 'DONE')
+                    .sort((a, b) => new Date(b.completed_at || 0) - new Date(a.completed_at || 0));
+                const tb = document.querySelector('#reportsResetsTable tbody');
+                if (done.length === 0) {
+                    tb.innerHTML = '<tr><td colspan="4" style="text-align:center; color:#94a3b8; padding:16px;">No completed resets yet.</td></tr>';
+                } else {
+                    tb.innerHTML = done.map(t => `<tr>
+                        <td><strong>${t.title}</strong></td>
+                        <td>#${t.id}</td>
+                        <td>${t.completed_at ? new Date(t.completed_at).toLocaleString() : '—'}</td>
+                        <td style="text-align:right;"><button class="primary" style="background:#8b5cf6;" onclick="runReport('resetSignoff', ${t.id})">Reprint Signoff</button></td>
+                    </tr>`).join('');
+                }
+            } catch (_) {}
+        }
+
+        function reportsStatus(msg, ok) {
+            const bar = document.getElementById('reportsStatusBar');
+            bar.style.display = 'block';
+            bar.style.background = ok ? '#ecfdf5' : '#fef2f2';
+            bar.style.color = ok ? '#065f46' : '#991b1b';
+            bar.style.border = '1px solid ' + (ok ? '#10b981' : '#ef4444');
+            bar.innerText = msg;
+            if (ok) setTimeout(() => { bar.style.display = 'none'; }, 5000);
+        }
+
+        async function runReport(kind, arg) {
+            let url, body = {};
+            switch (kind) {
+                case 'opening':
+                    url = '/api/reports/daily/opening';
+                    body = { date: document.getElementById('rptOpeningDate').value || undefined };
+                    break;
+                case 'closing':
+                    url = '/api/reports/daily/closing';
+                    body = { date: document.getElementById('rptClosingDate').value || undefined };
+                    break;
+                case 'weekly':
+                    url = '/api/reports/schedule/weekly';
+                    body = { date: document.getElementById('rptWeeklyDate').value || undefined };
+                    break;
+                case 'individual': {
+                    const eid = document.getElementById('rptIndividualEid').value;
+                    if (!eid) { reportsStatus('Pick an employee first.', false); return; }
+                    url = '/api/reports/schedule/individual';
+                    body = { eid, date: document.getElementById('rptIndividualDate').value || undefined };
+                    break;
+                }
+                case 'cyclecount':
+                    url = '/api/reports/cyclecount/print';
+                    break;
+                case 'shrink':
+                    url = '/api/reports/shrink';
+                    body = { date: document.getElementById('rptShrinkDate').value || undefined };
+                    break;
+                case 'department': {
+                    const department = document.getElementById('rptDepartment').value;
+                    if (!department) { reportsStatus('Pick a department first.', false); return; }
+                    url = '/api/reports/department';
+                    body = { department };
+                    break;
+                }
+                case 'price': {
+                    const eventId = document.getElementById('rptPriceEvent').value;
+                    if (!eventId) { reportsStatus('Pick a pricing event first.', false); return; }
+                    url = '/api/reports/price-change';
+                    body = { eventId: parseInt(eventId) };
+                    break;
+                }
+                case 'resetSignoff':
+                    url = `/api/pogs/reset/reprint/${arg}`;
+                    break;
+                default:
+                    reportsStatus('Unknown report.', false);
+                    return;
+            }
+            try {
+                const res = await apiFetch(url, { method: 'POST', body: JSON.stringify(body) });
+                if (res && res.success) reportsStatus(res.message || 'Sent to printer.', true);
+                else reportsStatus('Error: ' + (res && res.message ? res.message : 'Unknown failure'), false);
+            } catch (e) {
+                reportsStatus('Error: ' + e.message, false);
+            }
+        }
+
+        // ────────────────────────────────────────────────
+        //  VENDORS (DSD)
+        // ────────────────────────────────────────────────
+        let vendorsCache = [];
+
+        async function loadVendors() {
+            const rows = await apiFetch('/api/vendors');
+            vendorsCache = Array.isArray(rows) ? rows : [];
+            const tb = document.querySelector('#vendorsTable tbody');
+            tb.innerHTML = vendorsCache.length === 0
+                ? `<tr><td colspan="7" style="text-align:center;color:#94a3b8;padding:20px;">No vendors yet. Click "+ New Vendor" to add one.</td></tr>`
+                : vendorsCache.map(v => `
+                    <tr${v.active ? '' : ' style="opacity:0.5;"'}>
+                        <td><strong>${v.code}</strong></td>
+                        <td>${v.name}</td>
+                        <td>${v.contact_name || ''}${v.contact_phone ? '<br><small style="color:#64748b;">' + v.contact_phone + '</small>' : ''}</td>
+                        <td>${v.delivery_schedule || '<span style="color:#94a3b8;">—</span>'}</td>
+                        <td>${v.sku_count || 0}</td>
+                        <td>${v.active ? '<span style="background:#10b981;color:#fff;padding:2px 8px;border-radius:4px;font-size:11px;">ACTIVE</span>' : '<span style="background:#94a3b8;color:#fff;padding:2px 8px;border-radius:4px;font-size:11px;">INACTIVE</span>'}</td>
+                        <td>
+                            <span class="action-link" onclick='openVendorModal(${JSON.stringify(v).replace(/'/g, "&#39;")})'>Edit</span>
+                            <span class="action-link delete" onclick="deactivateVendor(${v.id})">Deactivate</span>
+                        </td>
+                    </tr>`).join('');
+        }
+
+        function openVendorModal(v) {
+            document.getElementById('vendorModalTitle').innerText = v ? 'Edit Vendor' : 'New Vendor';
+            document.getElementById('vendorId').value = v ? v.id : '';
+            document.getElementById('vendorCode').value = v ? v.code : '';
+            document.getElementById('vendorName').value = v ? v.name : '';
+            document.getElementById('vendorContactName').value = v ? (v.contact_name || '') : '';
+            document.getElementById('vendorContactPhone').value = v ? (v.contact_phone || '') : '';
+            document.getElementById('vendorContactEmail').value = v ? (v.contact_email || '') : '';
+            document.getElementById('vendorSchedule').value = v ? (v.delivery_schedule || '') : '';
+            document.getElementById('vendorNotes').value = v ? (v.notes || '') : '';
+            document.getElementById('vendorActive').value = v ? String(v.active) : '1';
+            const modal = document.getElementById('vendorModal');
+            modal.style.display = 'flex';
+        }
+
+        async function saveVendor() {
+            const id = document.getElementById('vendorId').value;
+            const body = {
+                code: document.getElementById('vendorCode').value.trim().toUpperCase(),
+                name: document.getElementById('vendorName').value.trim(),
+                contact_name: document.getElementById('vendorContactName').value,
+                contact_phone: document.getElementById('vendorContactPhone').value,
+                contact_email: document.getElementById('vendorContactEmail').value,
+                delivery_schedule: document.getElementById('vendorSchedule').value,
+                notes: document.getElementById('vendorNotes').value,
+                active: parseInt(document.getElementById('vendorActive').value, 10) === 1
+            };
+            if (!body.code || !body.name) { showToast('Code and name required', 'error'); return; }
+            const url = id ? '/api/vendors/' + id : '/api/vendors';
+            const res = await apiFetch(url, { method: id ? 'PUT' : 'POST', body: JSON.stringify(body) });
+            if (res && (res.success || res.id)) {
+                document.getElementById('vendorModal').style.display = 'none';
+                loadVendors();
+            }
+        }
+
+        async function deactivateVendor(id) {
+            if (!confirm('Deactivate this vendor? Historic records are preserved.')) return;
+            const res = await apiFetch('/api/vendors/' + id, { method: 'DELETE' });
+            if (res && res.success) loadVendors();
+        }
+
+        async function tagSkuVendor(sku, vendorId) {
+            const res = await apiFetch('/api/vendors/master-tag', {
+                method: 'PUT',
+                body: JSON.stringify({ sku, vendor_id: vendorId || null })
+            });
+            if (res && res.success) showToast('Vendor tag updated.', 'success');
+        }
+
+        // ────────────────────────────────────────────────
+        //  PRP RETURNS
+        // ────────────────────────────────────────────────
+        let prpCurrentFilter = 'OPEN';
+        const prpStatusColors = { OPEN: '#3b82f6', CLOSED: '#f59e0b', SHIPPED: '#10b981', CANCELLED: '#94a3b8' };
+
+        async function loadPrp(filter) {
+            prpCurrentFilter = filter || prpCurrentFilter;
+            ['Open','Closed','Shipped'].forEach(f => {
+                const el = document.getElementById('prpFilter' + f);
+                if (el) el.className = prpCurrentFilter.toUpperCase() === f.toUpperCase() ? 'primary' : '';
+            });
+            const rows = await apiFetch('/api/prp/batches');
+            if (!Array.isArray(rows)) return;
+            const filtered = rows.filter(b => b.status === prpCurrentFilter);
+            const tb = document.querySelector('#prpTable tbody');
+            tb.innerHTML = filtered.length === 0
+                ? `<tr><td colspan="7" style="text-align:center;color:#94a3b8;padding:20px;">No ${prpCurrentFilter.toLowerCase()} batches.</td></tr>`
+                : filtered.map(b => {
+                    const actions = [
+                        `<span class="action-link" onclick="viewPrpBatch(${b.id})">View</span>`,
+                        `<span class="action-link" onclick="printPrpBatch(${b.id})">Print</span>`,
+                        b.status === 'CLOSED' ? `<span class="action-link" onclick="shipPrpBatch(${b.id})">Mark Shipped</span>` : ''
+                    ].filter(Boolean).join(' ');
+                    return `<tr>
+                        <td><strong>#${b.id}</strong></td>
+                        <td><span style="background:${prpStatusColors[b.status] || '#64748b'};color:#fff;padding:2px 8px;border-radius:4px;font-size:11px;">${b.status}</span></td>
+                        <td>${b.vendor || '<span style="color:#94a3b8;">—</span>'}</td>
+                        <td>${b.item_count} lines · ${b.unit_count} units</td>
+                        <td>${b.created_at ? new Date(b.created_at).toLocaleString() : '—'}<br><small style="color:#64748b;">${b.opened_by_name || ''}</small></td>
+                        <td>${b.closed_at ? new Date(b.closed_at).toLocaleString() : '<span style="color:#94a3b8;">—</span>'}<br><small style="color:#64748b;">${b.closed_by_name || ''}</small></td>
+                        <td>${actions}</td>
+                    </tr>`;
+                }).join('');
+        }
+
+        async function viewPrpBatch(id) {
+            const res = await apiFetch('/api/prp/batches/' + id);
+            if (!res || !res.success) return;
+            const b = res.batch; const items = res.items || [];
+            document.getElementById('prpDetailTitle').innerText = `Batch #${b.id} — ${b.status}`;
+            document.getElementById('prpDetailInfo').innerHTML = `
+                <strong>Vendor:</strong> ${b.vendor || '—'} &nbsp; · &nbsp;
+                <strong>Carrier:</strong> ${b.carrier || '—'} &nbsp; · &nbsp;
+                <strong>Tracking:</strong> ${b.tracking_number || '—'}<br>
+                <strong>Opened by:</strong> ${b.opened_by_name || b.opened_by_eid || '—'} at ${b.created_at ? new Date(b.created_at).toLocaleString() : '—'}<br>
+                <strong>Closed by:</strong> ${b.closed_by_name || b.closed_by_eid || '—'} at ${b.closed_at ? new Date(b.closed_at).toLocaleString() : '—'}
+                ${b.shipped_at ? `<br><strong>Shipped:</strong> ${new Date(b.shipped_at).toLocaleString()}` : ''}
+                ${b.notes ? `<br><strong>Notes:</strong> ${b.notes}` : ''}`;
+            const tb = document.querySelector('#prpDetailTable tbody');
+            tb.innerHTML = items.length === 0
+                ? `<tr><td colspan="7" style="text-align:center;color:#94a3b8;padding:20px;">No items.</td></tr>`
+                : items.map(it => `<tr>
+                    <td>${it.sku}</td>
+                    <td>${it.name || '—'}</td>
+                    <td>${it.quantity}</td>
+                    <td>${it.reason_code}</td>
+                    <td>${it.notes || ''}</td>
+                    <td>${it.scanned_by_name || it.scanned_by_eid || '—'}</td>
+                    <td>${it.scanned_at ? new Date(it.scanned_at).toLocaleString() : '—'}</td>
+                </tr>`).join('');
+            document.getElementById('prpDetail').style.display = 'block';
+        }
+
+        async function printPrpBatch(id) {
+            const res = await apiFetch('/api/prp/batches/' + id + '/print', { method: 'POST' });
+            if (res && res.success) showToast(res.message || 'Sent to printer.', 'success');
+        }
+
+        async function shipPrpBatch(id) {
+            const carrier = prompt('Carrier (optional):') || '';
+            const tracking = prompt('Tracking number (optional):') || '';
+            const res = await apiFetch('/api/prp/batches/' + id + '/ship', {
+                method: 'POST',
+                body: JSON.stringify({ carrier: carrier || null, tracking_number: tracking || null })
+            });
+            if (res && res.success) { showToast(res.message || 'Marked shipped.', 'success'); loadPrp(); }
+        }
+
         async function loadTasks(filter) {
             tasksCurrentFilter = filter || tasksCurrentFilter;
             document.getElementById('tasksFilterOpen').className = tasksCurrentFilter === 'OPEN' ? 'primary' : '';
@@ -2099,18 +3358,30 @@
             const tb = document.querySelector('#tasksTable tbody');
             tb.innerHTML = filtered.length === 0
                 ? `<tr><td colspan="5" style="text-align:center;color:#94a3b8;padding:20px;">No ${tasksCurrentFilter.toLowerCase()} tasks.</td></tr>`
-                : filtered.map(t => `<tr>
-                    <td><span style="background:${priorityColor[t.priority]};color:#fff;padding:2px 8px;border-radius:4px;font-size:12px;">${t.priority}</span></td>
-                    <td><strong>${t.title}</strong>${t.description ? `<br><small style="color:#64748b;">${t.description}</small>` : ''}</td>
-                    <td>${t.assigned_name || '<span style="color:#94a3b8;">Unassigned</span>'}</td>
-                    <td>${t.due_date ? t.due_date.slice(0,10) : '<span style="color:#94a3b8;">—</span>'}</td>
-                    <td>
-                        ${t.status === 'OPEN'
-                            ? `<span class="action-link" onclick="setTaskStatus(${t.id},'DONE')">Mark Done</span>`
-                            : `<span class="action-link" onclick="setTaskStatus(${t.id},'OPEN')">Reopen</span>`}
-                        <span class="action-link delete" onclick="deleteTask(${t.id})">Delete</span>
-                    </td>
-                </tr>`).join('');
+                : filtered.map(t => {
+                    const isReset = t.task_type === 'POG_RESET';
+                    const items = Array.isArray(t.pog_items) ? t.pog_items : [];
+                    const done = items.filter(i => i.scanned_at).length;
+                    const total = items.length;
+                    const resetBadge = isReset ? `<span style="background:#8b5cf6;color:#fff;padding:2px 6px;border-radius:4px;font-size:10px;margin-left:6px;">POG RESET ${done}/${total}</span>` : '';
+                    const subLine = isReset
+                        ? `<br><small style="color:#64748b;">${items.map(i => `${i.scanned_at ? '✓' : '○'} ${i.pog_id}`).join('  ·  ')}</small>`
+                        : (t.description ? `<br><small style="color:#64748b;">${t.description}</small>` : '');
+                    const actions = isReset
+                        ? `<span class="action-link" onclick="openResetDetail(${t.id}, ${JSON.stringify(t.title).replace(/"/g,'&quot;')})">View Progress</span>
+                           <span class="action-link delete" onclick="deleteTask(${t.id})">Delete</span>`
+                        : `${t.status === 'OPEN'
+                                ? `<span class="action-link" onclick="setTaskStatus(${t.id},'DONE')">Mark Done</span>`
+                                : `<span class="action-link" onclick="setTaskStatus(${t.id},'OPEN')">Reopen</span>`}
+                           <span class="action-link delete" onclick="deleteTask(${t.id})">Delete</span>`;
+                    return `<tr>
+                        <td><span style="background:${priorityColor[t.priority]};color:#fff;padding:2px 8px;border-radius:4px;font-size:12px;">${t.priority}</span></td>
+                        <td><strong>${t.title}</strong>${resetBadge}${subLine}</td>
+                        <td>${t.assigned_name || '<span style="color:#94a3b8;">Unassigned</span>'}</td>
+                        <td>${t.due_date ? t.due_date.slice(0,10) : '<span style="color:#94a3b8;">—</span>'}</td>
+                        <td>${actions}</td>
+                    </tr>`;
+                }).join('');
         }
 
         async function setTaskStatus(id, status) {
@@ -2137,6 +3408,178 @@
             document.getElementById('taskTitle').focus();
         }
 
+        // --- RESET HISTORY ---
+        let resetHistoryFilter = 'ALL';
+
+        async function loadResetHistory(filter) {
+            resetHistoryFilter = filter || resetHistoryFilter;
+            document.getElementById('rhFilterAll').className = resetHistoryFilter === 'ALL' ? 'primary' : '';
+            document.getElementById('rhFilterOpen').className = resetHistoryFilter === 'OPEN' ? 'primary' : '';
+            document.getElementById('rhFilterDone').className = resetHistoryFilter === 'DONE' ? 'primary' : '';
+            document.getElementById('rhStoreLabel').innerText = currentStoreId || '—';
+
+            const tb = document.querySelector('#resetHistoryTable tbody');
+            tb.innerHTML = '<tr><td colspan="7" style="text-align:center;color:#94a3b8;padding:20px;">Loading...</td></tr>';
+
+            let rows = await apiFetch('/api/tasks');
+            if (!Array.isArray(rows)) {
+                tb.innerHTML = '<tr><td colspan="7" style="text-align:center;color:#ef4444;padding:20px;">Failed to load.</td></tr>';
+                return;
+            }
+            rows = rows.filter(t => t.task_type === 'POG_RESET');
+            if (resetHistoryFilter === 'OPEN') rows = rows.filter(t => t.status === 'OPEN');
+            else if (resetHistoryFilter === 'DONE') rows = rows.filter(t => t.status === 'DONE');
+            // Newest first: completed_at if present, else created_at
+            rows.sort((a, b) => {
+                const av = new Date(a.completed_at || a.created_at || 0).getTime();
+                const bv = new Date(b.completed_at || b.created_at || 0).getTime();
+                return bv - av;
+            });
+
+            if (rows.length === 0) {
+                tb.innerHTML = '<tr><td colspan="7" style="text-align:center;color:#94a3b8;padding:20px;">No resets match this filter.</td></tr>';
+                return;
+            }
+
+            tb.innerHTML = rows.map(t => {
+                const items = Array.isArray(t.pog_items) ? t.pog_items : [];
+                const done = items.filter(i => i.scanned_at).length;
+                const total = items.length;
+                const isDone = t.status === 'DONE';
+                const pogChips = items.map(i => {
+                    const color = i.scanned_at ? '#10b981' : '#94a3b8';
+                    return `<span style="display:inline-block; background:${color}; color:#fff; padding:2px 6px; border-radius:4px; font-size:10px; margin:1px;">${i.scanned_at ? '✓' : '○'} ${i.pog_id}</span>`;
+                }).join(' ');
+                const scanners = [...new Set(items.filter(i => i.scanned_at).map(i => i.scanned_by_name || i.scanned_by_eid).filter(Boolean))];
+                const scannerText = scanners.length === 0 ? '<span style="color:#94a3b8;">—</span>' : scanners.join(', ');
+                const createdStr = t.created_at ? new Date(t.created_at).toLocaleString() : '—';
+                const completedStr = t.completed_at ? new Date(t.completed_at).toLocaleString() : '<span style="color:#94a3b8;">—</span>';
+                const statusBadge = isDone
+                    ? `<span style="background:#10b981;color:#fff;padding:2px 8px;border-radius:4px;font-size:11px;">DONE</span>`
+                    : `<span style="background:#8b5cf6;color:#fff;padding:2px 8px;border-radius:4px;font-size:11px;">IN PROGRESS</span>`;
+                const titleEsc = JSON.stringify(t.title).replace(/"/g,'&quot;');
+                const actions = isDone
+                    ? `<span class="action-link" onclick="reprintFromHistory(${t.id})">Reprint</span>
+                       <span class="action-link" onclick="openResetDetail(${t.id}, ${titleEsc})">View</span>`
+                    : `<span class="action-link" onclick="openResetDetail(${t.id}, ${titleEsc})">View</span>`;
+                return `<tr>
+                    <td><strong>${t.title}</strong>${t.description ? `<br><small style="color:#64748b;">${t.description}</small>` : ''}</td>
+                    <td>${statusBadge}</td>
+                    <td>${createdStr}</td>
+                    <td>${completedStr}</td>
+                    <td><strong>${done}/${total}</strong><br>${pogChips}</td>
+                    <td>${scannerText}</td>
+                    <td>${actions}</td>
+                </tr>`;
+            }).join('');
+        }
+
+        async function reprintFromHistory(taskId) {
+            const res = await apiFetch(`/api/pogs/reset/reprint/${taskId}`, { method: 'POST' });
+            alert(res && res.message ? res.message : 'Reprint requested.');
+        }
+
+        // --- PLANOGRAM RESET TASKS ---
+        let resetDetailTaskId = null;
+
+        async function openCreateResetModal() {
+            document.getElementById('resetTitle').value = '';
+            document.getElementById('resetDescription').value = '';
+            document.getElementById('resetDueDate').value = '';
+            document.getElementById('resetPriority').value = 'NORMAL';
+
+            const pogListEl = document.getElementById('resetPogList');
+            const storeListEl = document.getElementById('resetStoreList');
+            pogListEl.innerHTML = '<div style="color:#94a3b8;">Loading planograms...</div>';
+            storeListEl.innerHTML = '';
+
+            const pogs = await apiFetch('/api/pogs');
+            if (Array.isArray(pogs) && pogs.length > 0) {
+                pogListEl.innerHTML = pogs.map(p =>
+                    `<div style="padding:2px 0;"><label style="cursor:pointer;"><input type="checkbox" class="reset-pog-cb" value="${p.id}"> ${p.pog_id} — ${p.name}${p.dimensions ? ' (' + p.dimensions + ')' : ''}</label></div>`
+                ).join('');
+            } else {
+                pogListEl.innerHTML = '<div style="color:#94a3b8;">No planograms found. Create one first.</div>';
+            }
+
+            if (Array.isArray(stores) && stores.length > 0) {
+                storeListEl.innerHTML = stores.map(s =>
+                    `<div style="padding:2px 0;"><label style="cursor:pointer;"><input type="checkbox" class="reset-store-cb" value="${s.id}"> Store #${s.id} — ${s.name}</label></div>`
+                ).join('');
+            } else {
+                storeListEl.innerHTML = '<div style="color:#94a3b8;">No stores configured.</div>';
+            }
+
+            document.getElementById('resetModal').style.display = 'flex';
+            document.getElementById('resetTitle').focus();
+        }
+
+        async function submitReset() {
+            const title = document.getElementById('resetTitle').value.trim();
+            if (!title) return alert('Title is required.');
+            const planogramIds = Array.from(document.querySelectorAll('.reset-pog-cb:checked')).map(cb => parseInt(cb.value));
+            const storeIds = Array.from(document.querySelectorAll('.reset-store-cb:checked')).map(cb => parseInt(cb.value));
+            if (planogramIds.length === 0) return alert('Select at least one planogram.');
+            if (storeIds.length === 0) return alert('Select at least one store.');
+
+            const body = {
+                title,
+                description: document.getElementById('resetDescription').value.trim() || null,
+                due_date: document.getElementById('resetDueDate').value || null,
+                priority: document.getElementById('resetPriority').value,
+                planogramIds,
+                storeIds
+            };
+            const res = await apiFetch('/api/pogs/reset/create', { method: 'POST', body: JSON.stringify(body) });
+            if (res && res.success) {
+                alert(res.message || 'Reset task created.');
+                document.getElementById('resetModal').style.display = 'none';
+                loadTasks('OPEN');
+            } else {
+                alert('Failed: ' + (res && res.message ? res.message : 'unknown error'));
+            }
+        }
+
+        async function openResetDetail(taskId, title) {
+            resetDetailTaskId = taskId;
+            document.getElementById('resetDetailTitle').innerText = `Reset Task: ${title}`;
+            const body = document.getElementById('resetDetailBody');
+            body.innerHTML = '<div style="color:#94a3b8;">Loading...</div>';
+            document.getElementById('resetDetailModal').style.display = 'flex';
+
+            const items = await apiFetch(`/api/tasks/${taskId}/pog-items`);
+            if (!Array.isArray(items)) {
+                body.innerHTML = '<div style="color:#ef4444;">Failed to load.</div>';
+                return;
+            }
+            const done = items.filter(i => i.scanned_at).length;
+            const total = items.length;
+            const allDone = done === total && total > 0;
+            document.getElementById('resetReprintBtn').style.display = allDone ? 'block' : 'none';
+
+            body.innerHTML = `
+                <div style="margin-bottom:12px; font-weight:bold;">Progress: ${done} / ${total} POGs scanned ${allDone ? '<span style="color:#10b981;">— COMPLETE</span>' : ''}</div>
+                <table class="data-table">
+                    <thead><tr><th>POG ID</th><th>Name</th><th>Dims</th><th>Status</th><th>Scanned By</th><th>When</th></tr></thead>
+                    <tbody>
+                        ${items.map(i => `<tr>
+                            <td><strong>${i.pog_id}</strong></td>
+                            <td>${i.pog_name || ''}</td>
+                            <td>${i.pog_dimensions || ''}</td>
+                            <td>${i.scanned_at ? '<span style="color:#10b981;">✓ Scanned</span>' : '<span style="color:#94a3b8;">Pending</span>'}</td>
+                            <td>${i.scanned_by_name || i.scanned_by_eid || '—'}</td>
+                            <td>${i.scanned_at ? new Date(i.scanned_at).toLocaleString() : '—'}</td>
+                        </tr>`).join('')}
+                    </tbody>
+                </table>`;
+        }
+
+        async function reprintResetSignoff() {
+            if (!resetDetailTaskId) return;
+            const res = await apiFetch(`/api/pogs/reset/reprint/${resetDetailTaskId}`, { method: 'POST' });
+            alert(res && res.message ? res.message : 'Reprint requested.');
+        }
+
         async function submitTask() {
             const title = document.getElementById('taskTitle').value.trim();
             if (!title) return alert('Title is required.');
@@ -2151,6 +3594,92 @@
             document.getElementById('taskModal').style.display = 'none';
             loadTasks('OPEN');
         }
+        // --- CSV EXPORT ---
+        function exportCsv(type) {
+            const dateParam = type === 'schedule' ? `?date=${scheduleCurrentDate.toISOString().slice(0, 10)}` : '';
+            const url = `/api/export/${type}${dateParam}`;
+            const a = document.createElement('a');
+            a.href = url;
+            a.setAttribute('download', '');
+            // Add store header via fetch and trigger download
+            fetch(url, { headers: { 'X-Store-ID': currentStoreId } })
+                .then(r => r.blob())
+                .then(blob => {
+                    const blobUrl = URL.createObjectURL(blob);
+                    a.href = blobUrl;
+                    document.body.appendChild(a);
+                    a.click();
+                    document.body.removeChild(a);
+                    URL.revokeObjectURL(blobUrl);
+                    showToast(`${type} CSV downloaded.`, 'success');
+                })
+                .catch(err => showToast('Export failed: ' + err.message, 'error'));
+        }
+
+        // --- SHRINK REPORT ---
+        function printShrinkReport() {
+            document.getElementById('shrinkReportDate').value = new Date().toISOString().slice(0, 10);
+            document.getElementById('shrinkReportModal').style.display = 'flex';
+        }
+
+        async function submitShrinkReport() {
+            const date = document.getElementById('shrinkReportDate').value;
+            if (!date) return;
+            const btn = document.getElementById('shrinkReportBtn');
+            btn.textContent = 'Sending...'; btn.disabled = true;
+            const res = await apiFetch('/api/reports/shrink', { method: 'POST', body: JSON.stringify({ date }) });
+            btn.textContent = 'Print Report'; btn.disabled = false;
+            if (res.success) {
+                showToast('Shrink report sent to printer.', 'success');
+                document.getElementById('shrinkReportModal').style.display = 'none';
+            } else {
+                showToast('Error: ' + res.message, 'error');
+            }
+        }
+
+        // --- DEPARTMENT REPORT ---
+        async function promptDeptReport() {
+            const rows = await apiFetch('/api/inventory/local');
+            if (!Array.isArray(rows) || rows.length === 0) return alert('No inventory loaded.');
+            const depts = [...new Set(rows.map(r => r.department).filter(Boolean))].sort();
+            if (depts.length === 0) return alert('No departments found in inventory.');
+            const container = document.getElementById('deptReportList');
+            container.innerHTML = '';
+            depts.forEach(dept => {
+                const count = rows.filter(r => r.department === dept).length;
+                const btn = document.createElement('div');
+                btn.style.cssText = 'padding:12px 16px; margin:6px 0; border:1px solid #e2e8f0; border-radius:8px; cursor:pointer; display:flex; justify-content:space-between; align-items:center; transition:background 0.15s;';
+                btn.onmouseenter = () => btn.style.background = '#f1f5f9';
+                btn.onmouseleave = () => btn.style.background = '';
+                btn.innerHTML = `<div><strong>${dept}</strong><br><span style="color:#64748b; font-size:12px;">${count} SKU${count !== 1 ? 's' : ''}</span></div><span style="color:#8e44ad; font-weight:bold; font-size:12px;">PRINT →</span>`;
+                btn.onclick = async () => {
+                    btn.innerHTML = '<span style="color:#64748b;">Sending to printer...</span>';
+                    const res = await apiFetch('/api/reports/department', { method: 'POST', body: JSON.stringify({ department: dept }) });
+                    if (res.success) {
+                        btn.innerHTML = `<span style="color:#059669; font-weight:bold;">✓ ${dept} — Sent to printer</span>`;
+                    } else {
+                        btn.innerHTML = `<span style="color:#ef4444;">Error: ${res.message}</span>`;
+                    }
+                };
+                container.appendChild(btn);
+            });
+            document.getElementById('deptReportModal').style.display = 'flex';
+        }
     </script>
+
+    <!-- Toast container -->
+    <div id="toast-container"></div>
+
+    <!-- Styled confirm dialog -->
+    <div id="confirm-overlay">
+        <div id="confirm-box">
+            <h3 id="confirm-title">Are you sure?</h3>
+            <p id="confirm-message"></p>
+            <div class="btn-row">
+                <button id="confirm-yes-btn">Yes</button>
+                <button id="confirm-no-btn">Cancel</button>
+            </div>
+        </div>
+    </div>
 </body>
 </html>

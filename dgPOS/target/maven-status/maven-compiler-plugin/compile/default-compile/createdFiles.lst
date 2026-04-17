@@ -10,4 +10,5 @@ com\dgpos\MainTransactionScreen$1.class
 com\dgpos\DatabaseManager.class
 com\dgpos\PosLogin$State.class
 com\dgpos\PrinterService.class
+com\dgpos\DatabaseManager$ZOutData.class
 com\dgpos\MainTransactionScreen.class

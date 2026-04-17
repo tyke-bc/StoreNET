@@ -12,6 +12,7 @@ import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
@@ -49,7 +50,7 @@ fun ScanScreen(storeId: String, onBackToLauncher: () -> Unit) {
     
     // Transfers Tabs
     var selectedTransfersTab by remember { mutableIntStateOf(0) }
-    val transfersTabs = listOf("Outgoing", "Incoming", "Mis-Ship", "PRP")
+    val transfersTabs = listOf("Outgoing", "Incoming", "Mis-Ship")
     
     val tabs = listOf("Main", "Sales History", "Locations", "General")
 
@@ -82,7 +83,14 @@ fun ScanScreen(storeId: String, onBackToLauncher: () -> Unit) {
     var tasksLoading by remember { mutableStateOf(false) }
     var tasksError by remember { mutableStateOf<String?>(null) }
 
+    // POG Reset Scan State
+    var resetStatusMessage by remember { mutableStateOf<String?>(null) }
+    var resetStatusSuccess by remember { mutableStateOf(true) }
+    var resetAlreadyDoneInfo by remember { mutableStateOf<com.github.tyke_bc.hht.network.ResetScanResponse?>(null) }
+    var resetDetailView by remember { mutableStateOf<com.github.tyke_bc.hht.network.Task?>(null) }
+
     // Cycle Count State
+    var cycleCountBarcode by remember { mutableStateOf("") }
     var cycleCountPogId by remember { mutableStateOf("") }
     var cycleCountSection by remember { mutableStateOf("") }
     var cycleCountPogName by remember { mutableStateOf("") }
@@ -104,6 +112,8 @@ fun ScanScreen(storeId: String, onBackToLauncher: () -> Unit) {
     var adjustmentUpcInput by remember { mutableStateOf("") }
     var receivingBolInput by remember { mutableStateOf("") }
     var countsUpcInput by remember { mutableStateOf("") }
+    var prpScannedUpc by remember { mutableStateOf("") }
+    var vendorDeliveryScannedUpc by remember { mutableStateOf("") }
     var isMenuOpen by remember { mutableStateOf(false) }
 
     fun performSearch(input: String) {
@@ -114,8 +124,8 @@ fun ScanScreen(storeId: String, onBackToLauncher: () -> Unit) {
                 var cleanedInput = input.trim()
 
                 // --- WAREHOUSE LABEL DETECTOR ---
-                if (cleanedInput.length == 18 && cleanedInput.startsWith("0000") && cleanedInput.endsWith("000")) {
-                    cleanedInput = cleanedInput.substring(4, 15)
+                if (cleanedInput.length == 18 && cleanedInput.startsWith("0000") && cleanedInput.all { it.isDigit() }) {
+                    cleanedInput = cleanedInput.substring(4, 16)
                 }
 
                 try {
@@ -164,20 +174,22 @@ fun ScanScreen(storeId: String, onBackToLauncher: () -> Unit) {
     var detectedSku by remember { mutableStateOf("") }
     var detectedPackSize by remember { mutableIntStateOf(1) }
 
-    LaunchedEffect(cycleCountPogId, cycleCountSection) {
-        if (cycleCountPogId.isNotEmpty() && cycleCountSection.isNotEmpty()) {
+    LaunchedEffect(cycleCountBarcode) {
+        if (cycleCountBarcode.isNotEmpty()) {
             cycleCountLoading = true
             cycleCountError = null
             cycleCountItems = emptyList()
             try {
-                val res = RetrofitClient.instance.getCycleCountSection(storeId, cycleCountPogId, cycleCountSection)
+                val res = RetrofitClient.instance.resolveCycleBarcode(storeId, cycleCountBarcode)
                 if (res.success) {
+                    cycleCountPogId = res.pogId ?: ""
                     cycleCountPogName = res.pogName ?: ""
+                    cycleCountSection = res.section ?: ""
                     cycleCountItems = res.items?.map {
                         CycleCountItemState(it.sku, it.name, it.upc, it.shelf, it.faces, it.quantity)
                     } ?: emptyList()
                 } else {
-                    cycleCountError = res.message ?: "Failed to load section"
+                    cycleCountError = res.message ?: "Failed to load"
                 }
             } catch (e: Exception) {
                 cycleCountError = e.message ?: "Network error"
@@ -193,15 +205,59 @@ fun ScanScreen(storeId: String, onBackToLauncher: () -> Unit) {
 
             // Section barcodes can be scanned from any screen
             if (input.startsWith("CYCL_")) {
-                val stripped = input.removePrefix("CYCL_")
-                val lastUnder = stripped.lastIndexOf('_')
-                if (lastUnder > 0) {
-                    cycleCountCounts.clear()
-                    cycleCountPogId = stripped.substring(0, lastUnder)
-                    cycleCountSection = stripped.substring(lastUnder + 1)
-                    selectedScreen = "Cycle Count"
-                }
+                cycleCountCounts.clear()
+                cycleCountBarcode = input.removePrefix("CYCL_")
+                selectedScreen = "Cycle Count"
                 return@collect
+            }
+
+            // Planogram reset tag: 6-digit numeric barcode matches a planogram ID.
+            // Try the reset endpoint first; on 'not_found' fall through to normal handling.
+            if (input.matches(Regex("^\\d{6}$"))) {
+                try {
+                    val eidOrNull = MainActivity.loggedInEid.ifBlank { null }
+                    val res = RetrofitClient.instance.scanResetTag(
+                        storeId,
+                        com.github.tyke_bc.hht.network.ResetScanRequest(input, eidOrNull)
+                    )
+                    when (res.status) {
+                        "applied" -> {
+                            resetStatusSuccess = true
+                            resetStatusMessage = "POG ${res.pogId}${res.pogName?.let { " — $it" } ?: ""} applied. " +
+                                "Progress: ${res.completed}/${res.total}. Put up the shelf strips; scanning items will show the new positions."
+                            if (selectedScreen == "Tasks") {
+                                try { tasksList = RetrofitClient.instance.getTasks(storeId) } catch (_: Exception) {}
+                            }
+                            return@collect
+                        }
+                        "completed" -> {
+                            resetStatusSuccess = true
+                            resetStatusMessage = "Reset complete! Last POG scanned (${res.completed}/${res.total}). " +
+                                "Signoff sheet sent to the office printer. Hand to SM when everyone has signed."
+                            if (selectedScreen == "Tasks") {
+                                try { tasksList = RetrofitClient.instance.getTasks(storeId) } catch (_: Exception) {}
+                            }
+                            return@collect
+                        }
+                        "already_done" -> {
+                            resetAlreadyDoneInfo = res
+                            return@collect
+                        }
+                        "not_found" -> {
+                            // No open reset for this 6-digit code. Fall through to normal scan handling
+                            // so the user still sees an inventory search result (or a clear not-found).
+                        }
+                        else -> {
+                            resetStatusSuccess = false
+                            resetStatusMessage = res.message ?: "Reset scan failed."
+                            return@collect
+                        }
+                    }
+                } catch (e: Exception) {
+                    resetStatusSuccess = false
+                    resetStatusMessage = "Reset scan error: ${e.message}"
+                    return@collect
+                }
             }
 
             if (selectedScreen == "Home") {
@@ -209,49 +265,53 @@ fun ScanScreen(storeId: String, onBackToLauncher: () -> Unit) {
                     detectedRTBarcode = input
                     showRTStockingDialog = true
                 } else {
-                    // Check if it's a warehouse label (18 digits)
+                    // Check if it's a warehouse label (18 digits, starts with 0000, UPC at positions 4-16)
                     var cleanedScan = input
                     var isWarehouseLabel = false
-                    if (input.length == 18 && input.startsWith("0000") && input.endsWith("000")) {
-                        cleanedScan = input.substring(4, 15)
+                    if (input.length == 18 && input.startsWith("0000") && input.all { it.isDigit() }) {
+                        cleanedScan = input.substring(4, 16)
                         isWarehouseLabel = true
                     }
                     
                     // Always perform the search first to show the item
-                    performSearch(input)
+                    performSearch(cleanedScan)
 
                     // If it was a warehouse label, check for manifest or backstock
                     if (isWarehouseLabel) {
                         coroutineScope.launch {
                             try {
+                                // Resolve the actual SKU via inventory lookup
+                                val invRes = RetrofitClient.instance.getInventoryItem(storeId, cleanedScan)
+                                if (!invRes.success || invRes.item == null) {
+                                    errorMessage = "WH: item not found for $cleanedScan"
+                                    return@launch
+                                }
+                                val resolvedSku = invRes.item.sku
+
                                 val manifests = RetrofitClient.instance.getManifests(storeId)
                                 val pendingTrk = manifests.find { it.status != "COMPLETED" }
                                 if (pendingTrk != null) {
                                     detectedManifestId = pendingTrk.id
-                                    detectedSku = cleanedScan
+                                    detectedSku = resolvedSku
                                     showReceivingDialog = true
                                 } else {
-                                    // Not on manifest, but is it in backstock?
-                                    val invRes = RetrofitClient.instance.getInventoryItem(storeId, cleanedScan)
-                                    if (invRes.success && (invRes.item?.quantityBackstock ?: 0) > 0) {
-                                        detectedSku = cleanedScan
-                                        detectedPackSize = invRes.item?.packSize ?: 1
+                                    val bs = invRes.item.quantityBackstock ?: 0
+                                    if (bs > 0) {
+                                        detectedSku = resolvedSku
+                                        detectedPackSize = invRes.item.packSize ?: 1
                                         showStockingDialog = true
+                                    } else {
+                                        errorMessage = "WH: $resolvedSku backstock=$bs, no action"
                                     }
                                 }
-                            } catch (e: Exception) { /* ignore */ }
+                            } catch (e: Exception) { errorMessage = "WH error: ${e.message}" }
                         }
                     }
                 }
             } else if (selectedScreen == "Order Picking" && selectedOrder != null) {
                 coroutineScope.launch {
                     try {
-                        var cleanedScan = scannedData.trim()
-                        // --- WAREHOUSE LABEL DETECTOR ---
-                        if (cleanedScan.length == 18 && cleanedScan.startsWith("0000") && cleanedScan.endsWith("000")) {
-                            cleanedScan = cleanedScan.substring(4, 15)
-                        }
-
+                        val cleanedScan = scannedData.trim()
                         val res = RetrofitClient.instance.pickItem(storeId, selectedOrder!!.id, com.github.tyke_bc.hht.network.PickRequest(cleanedScan))
                         if (res.success) {
                             pickingError = null // Clear any previous error
@@ -271,6 +331,8 @@ fun ScanScreen(storeId: String, onBackToLauncher: () -> Unit) {
                     "Adjustments" -> adjustmentUpcInput = scannedData
                     "Receiving" -> receivingBolInput = scannedData
                     "Counts/Recalls" -> countsUpcInput = scannedData
+                    "PRP Returns" -> prpScannedUpc = input
+                    "Vendor Delivery" -> vendorDeliveryScannedUpc = input
                     "Cycle Count" -> {
                         val found = cycleCountItems.find { it.upc == input || it.sku == input }
                         if (found != null) {
@@ -310,6 +372,10 @@ fun ScanScreen(storeId: String, onBackToLauncher: () -> Unit) {
             catch (e: Exception) { tasksError = e.message }
             finally { tasksLoading = false }
         }
+        // Keep the Home banner count fresh whenever user lands on Home.
+        if (selectedScreen == "Home") {
+            try { tasksList = RetrofitClient.instance.getTasks(storeId) } catch (_: Exception) {}
+        }
         if (selectedScreen == "Home" && selectedTab == 5) {
             coroutineScope.launch {
                 try {
@@ -321,6 +387,7 @@ fun ScanScreen(storeId: String, onBackToLauncher: () -> Unit) {
         }
     }
 
+    androidx.compose.runtime.CompositionLocalProvider(LocalStoreId provides storeId) {
     Box(modifier = Modifier.fillMaxSize()) {
         Scaffold(
             content = { padding ->
@@ -372,6 +439,39 @@ fun ScanScreen(storeId: String, onBackToLauncher: () -> Unit) {
 
                     when (selectedScreen) {
                         "Home" -> {
+                            // Open-task banner: surfaced on Home so employees see new work without hunting for it.
+                            val openTasks = tasksList.filter { it.status == "OPEN" }
+                            if (openTasks.isNotEmpty()) {
+                                val resetCount = openTasks.count { it.taskType == "POG_RESET" }
+                                val generalCount = openTasks.size - resetCount
+                                val bannerColor = if (resetCount > 0) Color(0xFF8B5CF6) else Color(0xFF2563EB)
+                                Surface(
+                                    color = bannerColor,
+                                    modifier = Modifier.fillMaxWidth().clickable { selectedScreen = "Tasks" }
+                                ) {
+                                    Row(
+                                        modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 10.dp),
+                                        verticalAlignment = Alignment.CenterVertically,
+                                        horizontalArrangement = Arrangement.SpaceBetween
+                                    ) {
+                                        Column {
+                                            Text(
+                                                text = "${openTasks.size} open task${if (openTasks.size == 1) "" else "s"}",
+                                                color = Color.White, fontWeight = FontWeight.Bold, fontSize = 14.sp
+                                            )
+                                            val subtitle = buildString {
+                                                if (resetCount > 0) append("$resetCount planogram reset${if (resetCount == 1) "" else "s"}")
+                                                if (resetCount > 0 && generalCount > 0) append(" · ")
+                                                if (generalCount > 0) append("$generalCount general")
+                                            }
+                                            if (subtitle.isNotEmpty()) {
+                                                Text(text = subtitle, color = Color.White.copy(alpha = 0.85f), fontSize = 11.sp)
+                                            }
+                                        }
+                                        Text("View Tasks ›", color = Color.White, fontWeight = FontWeight.SemiBold, fontSize = 13.sp)
+                                    }
+                                }
+                            }
                             Row(modifier = Modifier.fillMaxWidth().background(Color(0xFFD6D6D6)).border(BorderStroke(1.dp, Color.Gray))) {
                                 tabs.forEachIndexed { index, title ->
                                     val isSelected = selectedTab == index
@@ -382,7 +482,7 @@ fun ScanScreen(storeId: String, onBackToLauncher: () -> Unit) {
                             }
                             when (selectedTab) {
                                 0 -> ProductMainContent(storeId, upcInput, { upcInput = it }, item, isLoading, errorMessage, ::performSearch)
-                                1 -> Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { Text("Sales History Coming Soon", color = Color.Gray) }
+                                1 -> SalesHistoryContent(storeId, item)
                                 2 -> LocationsContent(item)
                                 3 -> GeneralContent(item)
                                 else -> Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { Text("Tab $selectedTab coming soon", color = Color.Gray) }
@@ -463,7 +563,6 @@ fun ScanScreen(storeId: String, onBackToLauncher: () -> Unit) {
                                 0 -> TransfersOutgoingContent()
                                 1 -> TransfersIncomingContent()
                                 2 -> TransfersMisShipContent()
-                                3 -> TransfersPRPContent()
                             }
                         }
                         "Order Picking" -> {
@@ -521,11 +620,15 @@ fun ScanScreen(storeId: String, onBackToLauncher: () -> Unit) {
                                     tasksList.filter { it.status == "OPEN" }.isEmpty() -> Box(Modifier.fillMaxSize(), Alignment.Center) { Text("No open tasks.", color = Color.Gray) }
                                     else -> LazyColumn(modifier = Modifier.fillMaxSize().padding(8.dp)) {
                                         items(tasksList.filter { it.status == "OPEN" }) { task ->
+                                            val isReset = task.taskType == "POG_RESET"
+                                            val children = task.pogItems ?: emptyList()
+                                            val doneCount = children.count { it.scannedAt != null }
                                             Surface(
                                                 shape = RoundedCornerShape(6.dp),
                                                 color = Color.White,
-                                                border = BorderStroke(1.dp, priorityColor[task.priority] ?: Color(0xFFCBD5E1)),
+                                                border = BorderStroke(1.dp, if (isReset) Color(0xFF8B5CF6) else (priorityColor[task.priority] ?: Color(0xFFCBD5E1))),
                                                 modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp)
+                                                    .then(if (isReset) Modifier.clickable { resetDetailView = task } else Modifier)
                                             ) {
                                                 Row(modifier = Modifier.padding(12.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.SpaceBetween) {
                                                     Column(modifier = Modifier.weight(1f)) {
@@ -533,25 +636,39 @@ fun ScanScreen(storeId: String, onBackToLauncher: () -> Unit) {
                                                             Surface(shape = RoundedCornerShape(4.dp), color = priorityColor[task.priority] ?: Color.Gray) {
                                                                 Text(task.priority, color = Color.White, fontSize = 10.sp, fontWeight = FontWeight.Bold, modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp))
                                                             }
+                                                            if (isReset) {
+                                                                Surface(shape = RoundedCornerShape(4.dp), color = Color(0xFF8B5CF6)) {
+                                                                    Text("POG RESET $doneCount/${children.size}", color = Color.White, fontSize = 10.sp, fontWeight = FontWeight.Bold, modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp))
+                                                                }
+                                                            }
                                                             Text(task.title, fontWeight = FontWeight.SemiBold, fontSize = 14.sp)
                                                         }
                                                         if (!task.description.isNullOrBlank()) Text(task.description, fontSize = 12.sp, color = Color(0xFF64748B), modifier = Modifier.padding(top = 2.dp))
+                                                        if (isReset) {
+                                                            Text(
+                                                                children.joinToString("  ·  ") { "${if (it.scannedAt != null) "✓" else "○"} ${it.pogId}" },
+                                                                fontSize = 11.sp, color = Color(0xFF64748B), modifier = Modifier.padding(top = 2.dp)
+                                                            )
+                                                            Text("Scan each POG tag to complete", fontSize = 10.sp, color = Color(0xFF8B5CF6), fontWeight = FontWeight.SemiBold, modifier = Modifier.padding(top = 2.dp))
+                                                        }
                                                         if (task.assignedName != null || task.dueDate != null) {
                                                             Text(listOfNotNull(task.assignedName?.let { "Assigned: $it" }, task.dueDate?.take(10)?.let { "Due: $it" }).joinToString("  ·  "), fontSize = 11.sp, color = Color(0xFF94A3B8), modifier = Modifier.padding(top = 2.dp))
                                                         }
                                                     }
-                                                    Button(
-                                                        onClick = {
-                                                            coroutineScope.launch {
-                                                                try {
-                                                                    RetrofitClient.instance.updateTask(storeId, task.id, com.github.tyke_bc.hht.network.UpdateTaskRequest("DONE"))
-                                                                    tasksList = RetrofitClient.instance.getTasks(storeId)
-                                                                } catch (_: Exception) {}
-                                                            }
-                                                        },
-                                                        colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF10B981)),
-                                                        modifier = Modifier.padding(start = 8.dp)
-                                                    ) { Text("Done", fontSize = 12.sp) }
+                                                    if (!isReset) {
+                                                        Button(
+                                                            onClick = {
+                                                                coroutineScope.launch {
+                                                                    try {
+                                                                        RetrofitClient.instance.updateTask(storeId, task.id, com.github.tyke_bc.hht.network.UpdateTaskRequest("DONE"))
+                                                                        tasksList = RetrofitClient.instance.getTasks(storeId)
+                                                                    } catch (_: Exception) {}
+                                                                }
+                                                            },
+                                                            colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF10B981)),
+                                                            modifier = Modifier.padding(start = 8.dp)
+                                                        ) { Text("Done", fontSize = 12.sp) }
+                                                    }
                                                 }
                                             }
                                         }
@@ -567,7 +684,7 @@ fun ScanScreen(storeId: String, onBackToLauncher: () -> Unit) {
                                 Surface(color = Color(0xFF1E3A5F), modifier = Modifier.fillMaxWidth()) {
                                     Row(modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
                                         Column {
-                                            Text("POG $cycleCountPogId · SEC $cycleCountSection", color = Color.White, fontWeight = FontWeight.Bold, fontSize = 15.sp)
+                                            Text(if (cycleCountSection.isNotEmpty()) "POG $cycleCountPogId · SEC $cycleCountSection" else "POG $cycleCountPogId", color = Color.White, fontWeight = FontWeight.Bold, fontSize = 15.sp)
                                             if (cycleCountPogName.isNotEmpty()) Text(cycleCountPogName, color = Color.White.copy(alpha = 0.75f), fontSize = 12.sp)
                                         }
                                         Text("$countedCount / ${cycleCountItems.size} counted", color = Color(0xFF90CAF9), fontWeight = FontWeight.Bold, fontSize = 13.sp)
@@ -594,7 +711,7 @@ fun ScanScreen(storeId: String, onBackToLauncher: () -> Unit) {
                                                 Row(modifier = Modifier.padding(horizontal = 12.dp, vertical = 10.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.SpaceBetween) {
                                                     Column(modifier = Modifier.weight(1f)) {
                                                         Text(ccItem.name, fontWeight = FontWeight.SemiBold, fontSize = 13.sp, color = Color(0xFF1E293B))
-                                                        Text("Shelf ${ccItem.shelf}  ·  SKU ${ccItem.sku}", fontSize = 11.sp, color = Color(0xFF64748B))
+                                                        Text("${if (ccItem.shelf != null) "Shelf ${ccItem.shelf}  ·  " else ""}SKU ${ccItem.sku}", fontSize = 11.sp, color = Color(0xFF64748B))
                                                     }
                                                     Column(horizontalAlignment = Alignment.End) {
                                                         if (isCounted) Text(counted!!, fontWeight = FontWeight.Bold, fontSize = 20.sp, color = Color(0xFF2E7D32))
@@ -638,6 +755,14 @@ fun ScanScreen(storeId: String, onBackToLauncher: () -> Unit) {
                                 }
                             }
                         }
+                        "Transfers" -> TransfersContent(storeId)
+                        "Review" -> ReviewContent(storeId)
+                        "Nones & Tons" -> NonesAndTonsContent(storeId)
+                        "Cooler Freezer / Safety Walk" -> SafetyWalkContent(storeId, "COOLER_FREEZER_WALK")
+                        "Compliance Check" -> ComplianceCheckContent(storeId)
+                        "Refrigeration Maintenance" -> RefrigerationMaintenanceContent(storeId)
+                        "PRP Returns" -> PrpReturnsContent(storeId, prpScannedUpc) { prpScannedUpc = "" }
+                        "Vendor Delivery" -> VendorDeliveryContent(storeId, vendorDeliveryScannedUpc) { vendorDeliveryScannedUpc = "" }
                         else -> {
                             Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                                 Text("$selectedScreen Screen Coming Soon", color = Color.Gray, fontSize = 18.sp)
@@ -663,6 +788,7 @@ fun ScanScreen(storeId: String, onBackToLauncher: () -> Unit) {
                         NavMenuItem(Icons.Default.FactCheck, "Compliance Check", Color(0xFFFF6F00)) { selectedScreen = "Compliance Check"; isMenuOpen = false }
                         NavMenuItem(Icons.Default.Build, "Refrigeration Maintenance", DGBlue) { selectedScreen = "Refrigeration Maintenance"; isMenuOpen = false }
                         NavMenuItem(Icons.Default.Inventory, "PRP Returns", Color(0xFF5D4037)) { selectedScreen = "PRP Returns"; isMenuOpen = false }
+                        NavMenuItem(Icons.Default.LocalShipping, "Vendor Delivery", Color(0xFF059669)) { selectedScreen = "Vendor Delivery"; isMenuOpen = false }
                         HorizontalDivider(modifier = Modifier.padding(vertical = 8.dp))
                         NavMenuItem(Icons.Default.ShoppingCart, "Order Picking", Color(0xFF10B981)) { selectedScreen = "Order Picking"; isMenuOpen = false }
                         NavMenuItem(Icons.Default.FactCheck, "Tasks", Color(0xFF6366F1)) { selectedScreen = "Tasks"; isMenuOpen = false }
@@ -716,7 +842,7 @@ fun ScanScreen(storeId: String, onBackToLauncher: () -> Unit) {
                 title = { Text(cycleCountDialogItem!!.name, fontSize = 15.sp) },
                 text = {
                     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                        Text("Shelf ${cycleCountDialogItem!!.shelf}  ·  System qty: ${cycleCountDialogItem!!.systemQty}", fontSize = 12.sp, color = Color.Gray)
+                        Text("${if (cycleCountDialogItem!!.shelf != null) "Shelf ${cycleCountDialogItem!!.shelf}  ·  " else ""}System qty: ${cycleCountDialogItem!!.systemQty}", fontSize = 12.sp, color = Color.Gray)
                         OutlinedTextField(
                             value = cycleCountDialogInput,
                             onValueChange = { cycleCountDialogInput = it.filter { c -> c.isDigit() } },
@@ -776,7 +902,80 @@ fun ScanScreen(storeId: String, onBackToLauncher: () -> Unit) {
                 }) { Text("STOCK ALL") }
             }, dismissButton = { Button(onClick = { showRTStockingDialog = false }) { Text("CANCEL") } })
         }
+
+        // Reset scan status toast (applied / completed / error)
+        if (resetStatusMessage != null) {
+            AlertDialog(
+                onDismissRequest = { resetStatusMessage = null },
+                title = { Text(if (resetStatusSuccess) "Planogram Reset" else "Reset Scan Failed", color = if (resetStatusSuccess) Color(0xFF10B981) else Color(0xFFEF4444)) },
+                text = { Text(resetStatusMessage ?: "") },
+                confirmButton = { Button(onClick = { resetStatusMessage = null }) { Text("OK") } }
+            )
+        }
+
+        // Already-done dialog — offers reprint
+        val alreadyDone = resetAlreadyDoneInfo
+        if (alreadyDone != null) {
+            val who = alreadyDone.scannedByName ?: alreadyDone.scannedByEid ?: "unknown"
+            val when_ = alreadyDone.scannedAt?.replace('T', ' ')?.take(19) ?: "earlier"
+            AlertDialog(
+                onDismissRequest = { resetAlreadyDoneInfo = null },
+                title = { Text("Already Completed") },
+                text = {
+                    Text("POG ${alreadyDone.pogId}${alreadyDone.pogName?.let { " — $it" } ?: ""} was already scanned on $when_ by $who.\n\nReprint the signoff sheet?")
+                },
+                confirmButton = {
+                    Button(onClick = {
+                        val taskId = alreadyDone.taskId ?: 0
+                        resetAlreadyDoneInfo = null
+                        if (taskId > 0) {
+                            coroutineScope.launch {
+                                try {
+                                    val r = RetrofitClient.instance.reprintResetSignoff(storeId, taskId)
+                                    resetStatusSuccess = r.success
+                                    resetStatusMessage = r.message ?: if (r.success) "Signoff reprinted." else "Reprint failed."
+                                } catch (e: Exception) {
+                                    resetStatusSuccess = false
+                                    resetStatusMessage = "Reprint error: ${e.message}"
+                                }
+                            }
+                        }
+                    }) { Text("REPRINT") }
+                },
+                dismissButton = { Button(onClick = { resetAlreadyDoneInfo = null }) { Text("NO") } }
+            )
+        }
+
+        // Reset task detail dialog — shown when user taps a POG_RESET task in the list
+        val detailTask = resetDetailView
+        if (detailTask != null) {
+            val children = detailTask.pogItems ?: emptyList()
+            val doneCount = children.count { it.scannedAt != null }
+            AlertDialog(
+                onDismissRequest = { resetDetailView = null },
+                title = { Text("${detailTask.title}  ($doneCount/${children.size})") },
+                text = {
+                    androidx.compose.foundation.lazy.LazyColumn(modifier = Modifier.heightIn(max = 360.dp)) {
+                        items(children) { c ->
+                            Row(modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp), verticalAlignment = Alignment.CenterVertically) {
+                                Text(if (c.scannedAt != null) "✓" else "○", color = if (c.scannedAt != null) Color(0xFF10B981) else Color(0xFF94A3B8), fontWeight = FontWeight.Bold, modifier = Modifier.padding(end = 8.dp))
+                                Column(modifier = Modifier.weight(1f)) {
+                                    Text("${c.pogId} — ${c.pogName ?: ""}", fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
+                                    if (c.scannedAt != null) {
+                                        Text("by ${c.scannedByName ?: c.scannedByEid ?: "unknown"} @ ${c.scannedAt.replace('T', ' ').take(19)}", fontSize = 11.sp, color = Color(0xFF64748B))
+                                    } else {
+                                        Text("Pending scan", fontSize = 11.sp, color = Color(0xFF94A3B8))
+                                    }
+                                }
+                            }
+                        }
+                    }
+                },
+                confirmButton = { Button(onClick = { resetDetailView = null }) { Text("CLOSE") } }
+            )
+        }
     }
+    } // end CompositionLocalProvider
 }
 
 @Composable
@@ -987,16 +1186,597 @@ fun LocationsContent(item: InventoryItem?) {
 
 @Composable
 fun LocationCard(item: InventoryItem) {
-    val section = item.location?.split("-")?.getOrNull(0) ?: "N/A"
-    val shelf = item.location?.split("-")?.getOrNull(1) ?: "N/A"
+    val loc = item.location ?: "N/A"
+    val isMag = loc.equals("MAG", ignoreCase = true) && item.pogInfo.isNullOrBlank()
+    val isStandard = loc.contains("-")
     val pos = item.position ?: 1
-    
-    Surface(modifier = Modifier.fillMaxWidth().wrapContentHeight(), color = Color.White, shape = RoundedCornerShape(8.dp), border = BorderStroke(1.dp, Color.Gray)) {
+
+    Surface(modifier = Modifier.fillMaxWidth().wrapContentHeight(), color = Color.White, shape = RoundedCornerShape(8.dp), border = BorderStroke(1.dp, if (isMag) Color(0xFF8B5CF6) else Color.Gray)) {
         Box(modifier = Modifier.padding(2.dp).border(1.dp, Color.LightGray, RoundedCornerShape(6.dp)).padding(12.dp)) {
             Column {
-                Text(text = item.pogInfo ?: "PENDING POG DATA", fontSize = 14.sp, fontWeight = FontWeight.Bold, color = Color.Black)
-                Text(text = item.department.uppercase(), fontSize = 14.sp, fontWeight = FontWeight.Bold, color = Color.Black)
-                Text(text = "Sec.${section} Shelf${shelf.padStart(2, '0')} Pos.${pos.toString().padStart(2, '0')} ${item.faces ?: "F1"} ${item.location}", fontSize = 14.sp, fontWeight = FontWeight.Bold, color = Color.Black)
+                if (isMag) {
+                    Text(text = "Item is a MAG item.", fontSize = 16.sp, fontWeight = FontWeight.Bold, color = Color(0xFF8B5CF6))
+                    Text(text = "Not on a planogram — free-floating in the store.", fontSize = 12.sp, color = Color(0xFF64748B))
+                    Text(text = item.department.uppercase(), fontSize = 14.sp, fontWeight = FontWeight.Bold, color = Color.Black, modifier = Modifier.padding(top = 4.dp))
+                } else {
+                    Text(text = item.pogInfo ?: "PENDING POG DATA", fontSize = 14.sp, fontWeight = FontWeight.Bold, color = Color.Black)
+                    Text(text = item.department.uppercase(), fontSize = 14.sp, fontWeight = FontWeight.Bold, color = Color.Black)
+                    if (isStandard) {
+                        val section = loc.split("-")[0]
+                        val shelf = loc.split("-").getOrElse(1) { "N/A" }
+                        Text(text = "Sec.${section} Shelf${shelf.padStart(2, '0')} Pos.${pos.toString().padStart(2, '0')} ${item.faces ?: "F1"} $loc", fontSize = 14.sp, fontWeight = FontWeight.Bold, color = Color.Black)
+                    } else {
+                        Text(text = "Location: $loc  ${item.faces ?: "F1"}", fontSize = 14.sp, fontWeight = FontWeight.Bold, color = Color.Black)
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+fun SalesHistoryContent(storeId: String, item: InventoryItem?) {
+    var sales by remember { mutableStateOf<List<com.github.tyke_bc.hht.network.SaleRow>>(emptyList()) }
+    var isLoading by remember { mutableStateOf(false) }
+    var errorMsg by remember { mutableStateOf<String?>(null) }
+    val key = item?.sku ?: item?.upc
+    LaunchedEffect(key) {
+        if (key.isNullOrBlank()) { sales = emptyList(); return@LaunchedEffect }
+        isLoading = true; errorMsg = null
+        try {
+            val res = RetrofitClient.instance.getSalesHistory(storeId, key)
+            sales = res.sales ?: emptyList()
+            if (!res.success) errorMsg = res.message
+        } catch (e: Exception) { errorMsg = "Error: ${e.message}" }
+        finally { isLoading = false }
+    }
+    Column(modifier = Modifier.fillMaxSize().padding(12.dp)) {
+        if (item == null) {
+            Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                Text("Scan an item to see its recent sales.", color = Color.Gray)
+            }
+            return@Column
+        }
+        Text("Recent sales — ${item.name}", fontWeight = FontWeight.Bold, fontSize = 14.sp)
+        Text("SKU ${item.sku}  ·  UPC ${item.upc ?: "-"}", fontSize = 11.sp, color = Color(0xFF64748B))
+        Spacer(Modifier.height(8.dp))
+        when {
+            isLoading -> Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { CircularProgressIndicator() }
+            errorMsg != null -> Text("Error: $errorMsg", color = Color.Red)
+            sales.isEmpty() -> Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { Text("No sales recorded for this item.", color = Color.Gray) }
+            else -> {
+                // Quick aggregates
+                val totalUnits = sales.sumOf { it.quantity ?: 0 }
+                val totalRevenue = sales.sumOf { (it.quantity ?: 0) * (it.price ?: 0.0) }
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Surface(color = Color(0xFFEEF2FF), shape = RoundedCornerShape(6.dp), modifier = Modifier.weight(1f)) {
+                        Column(Modifier.padding(8.dp)) {
+                            Text("Units", fontSize = 10.sp, color = Color(0xFF6366F1)); Text("$totalUnits", fontWeight = FontWeight.Bold, fontSize = 18.sp)
+                        }
+                    }
+                    Surface(color = Color(0xFFECFDF5), shape = RoundedCornerShape(6.dp), modifier = Modifier.weight(1f)) {
+                        Column(Modifier.padding(8.dp)) {
+                            Text("Revenue", fontSize = 10.sp, color = Color(0xFF10B981)); Text("$%.2f".format(totalRevenue), fontWeight = FontWeight.Bold, fontSize = 18.sp)
+                        }
+                    }
+                    Surface(color = Color(0xFFFEF3C7), shape = RoundedCornerShape(6.dp), modifier = Modifier.weight(1f)) {
+                        Column(Modifier.padding(8.dp)) {
+                            Text("Transactions", fontSize = 10.sp, color = Color(0xFFB45309)); Text("${sales.size}", fontWeight = FontWeight.Bold, fontSize = 18.sp)
+                        }
+                    }
+                }
+                Spacer(Modifier.height(8.dp))
+                LazyColumn(modifier = Modifier.fillMaxSize()) {
+                    items(sales) { s ->
+                        val markdown = s.originalPrice != null && s.price != null && s.originalPrice!! > s.price!!
+                        Surface(shape = RoundedCornerShape(4.dp), color = Color.White, border = BorderStroke(1.dp, Color(0xFFE2E8F0)), modifier = Modifier.fillMaxWidth().padding(vertical = 3.dp)) {
+                            Row(modifier = Modifier.padding(horizontal = 10.dp, vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) {
+                                Column(modifier = Modifier.weight(1f)) {
+                                    Text(s.timestamp?.replace('T', ' ')?.take(19) ?: "—", fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
+                                    Text("${s.tenderType ?: "?"}  ·  Receipt ${s.barcode ?: "—"}", fontSize = 10.sp, color = Color(0xFF64748B))
+                                }
+                                Column(horizontalAlignment = Alignment.End) {
+                                    Text("×${s.quantity ?: 0}  @  $%.2f".format(s.price ?: 0.0), fontSize = 13.sp, fontWeight = FontWeight.Bold)
+                                    if (markdown) {
+                                        Text("was $%.2f".format(s.originalPrice!!), fontSize = 10.sp, color = Color(0xFFEF4444), textDecoration = TextDecoration.LineThrough)
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+// Shared composable for both Damages and Store Use tabs — only differs by adjustmentType and reason code list.
+@Composable
+fun AdjustmentForm(
+    storeId: String,
+    scannedUpc: String,
+    onScannedUpcChange: (String) -> Unit,
+    adjustmentType: String,
+    reasonCodes: List<String>,
+    headerLabel: String,
+    headerColor: Color
+) {
+    var currentItem by remember { mutableStateOf<InventoryItem?>(null) }
+    var lookupErr by remember { mutableStateOf<String?>(null) }
+    var quantity by remember { mutableStateOf("1") }
+    var reason by remember { mutableStateOf(reasonCodes.firstOrNull() ?: "") }
+    var notes by remember { mutableStateOf("") }
+    var submitting by remember { mutableStateOf(false) }
+    var toast by remember { mutableStateOf<String?>(null) }
+    var toastOk by remember { mutableStateOf(true) }
+    val scope = rememberCoroutineScope()
+
+    // Look up item when the UPC/SKU changes (debounce-ish: just on each change)
+    LaunchedEffect(scannedUpc) {
+        if (scannedUpc.isBlank()) { currentItem = null; lookupErr = null; return@LaunchedEffect }
+        try {
+            val r = RetrofitClient.instance.getInventoryItem(storeId, scannedUpc.trim())
+            if (r.success && r.item != null) { currentItem = r.item; lookupErr = null }
+            else { currentItem = null; lookupErr = r.message ?: "Not found" }
+        } catch (e: Exception) { currentItem = null; lookupErr = e.message }
+    }
+
+    Column(modifier = Modifier.fillMaxSize().padding(16.dp).verticalScroll(rememberScrollState())) {
+        Surface(color = headerColor, shape = RoundedCornerShape(4.dp)) {
+            Text(headerLabel, color = Color.White, fontWeight = FontWeight.Bold, fontSize = 14.sp, modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp))
+        }
+        Spacer(Modifier.height(10.dp))
+
+        Text("UPC / SKU", fontWeight = FontWeight.SemiBold, fontSize = 12.sp)
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            BasicTextField(
+                value = scannedUpc, onValueChange = onScannedUpcChange,
+                modifier = Modifier.weight(1f).height(40.dp).border(1.dp, Color.Gray).padding(8.dp),
+                textStyle = TextStyle(fontSize = 14.sp)
+            )
+            Spacer(Modifier.width(8.dp)); BarcodePlaceholder()
+        }
+        Spacer(Modifier.height(10.dp))
+
+        if (lookupErr != null) {
+            Text("⚠ $lookupErr", color = Color(0xFFEF4444), fontSize = 12.sp, modifier = Modifier.padding(vertical = 4.dp))
+        }
+        currentItem?.let { item ->
+            Surface(color = Color(0xFFF8FAFC), border = BorderStroke(1.dp, Color(0xFFE2E8F0)), shape = RoundedCornerShape(4.dp)) {
+                Column(Modifier.padding(10.dp)) {
+                    Text(item.name, fontWeight = FontWeight.Bold, fontSize = 14.sp)
+                    Text("SKU ${item.sku}  ·  ${item.department}", fontSize = 11.sp, color = Color(0xFF64748B))
+                    Text("Current OH: ${item.quantity}   Regular Price: $%.2f".format(item.price), fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
+                    item.location?.let { Text("Location: $it  ${item.faces ?: ""}", fontSize = 11.sp, color = Color(0xFF64748B)) }
+                }
+            }
+            Spacer(Modifier.height(10.dp))
+        }
+
+        Text("Reason Code", fontWeight = FontWeight.SemiBold, fontSize = 12.sp)
+        Row(modifier = Modifier.horizontalScroll(rememberScrollState()).padding(vertical = 4.dp)) {
+            reasonCodes.forEach { code ->
+                val selected = reason == code
+                Surface(
+                    color = if (selected) headerColor else Color(0xFFE2E8F0),
+                    shape = RoundedCornerShape(4.dp),
+                    modifier = Modifier.padding(end = 6.dp).clickable { reason = code }
+                ) {
+                    Text(code, color = if (selected) Color.White else Color(0xFF334155), fontSize = 12.sp, fontWeight = FontWeight.SemiBold, modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp))
+                }
+            }
+        }
+        Spacer(Modifier.height(10.dp))
+
+        Text("Adjustment Quantity", fontWeight = FontWeight.SemiBold, fontSize = 12.sp)
+        BasicTextField(
+            value = quantity, onValueChange = { quantity = it.filter { c -> c.isDigit() } },
+            modifier = Modifier.width(100.dp).height(40.dp).border(1.dp, Color.Gray).padding(8.dp),
+            textStyle = TextStyle(fontSize = 16.sp, fontWeight = FontWeight.Bold),
+            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number)
+        )
+        Spacer(Modifier.height(10.dp))
+
+        Text("Notes (optional)", fontWeight = FontWeight.SemiBold, fontSize = 12.sp)
+        BasicTextField(
+            value = notes, onValueChange = { notes = it },
+            modifier = Modifier.fillMaxWidth().height(60.dp).border(1.dp, Color.Gray).padding(8.dp),
+            textStyle = TextStyle(fontSize = 13.sp)
+        )
+        Spacer(Modifier.height(14.dp))
+
+        Button(
+            onClick = {
+                val qty = quantity.toIntOrNull() ?: 0
+                val sku = currentItem?.sku ?: scannedUpc.trim()
+                if (currentItem == null) { toast = "Scan or enter a valid UPC/SKU first"; toastOk = false; return@Button }
+                if (qty <= 0) { toast = "Enter a positive quantity"; toastOk = false; return@Button }
+                if (reason.isBlank()) { toast = "Select a reason code"; toastOk = false; return@Button }
+                submitting = true
+                scope.launch {
+                    try {
+                        val res = RetrofitClient.instance.submitAdjustment(
+                            storeId,
+                            com.github.tyke_bc.hht.network.AdjustmentRequest(
+                                sku = sku, adjustmentType = adjustmentType, quantity = qty,
+                                reasonCode = reason, notes = notes.ifBlank { null },
+                                eid = MainActivity.loggedInEid.ifBlank { null }
+                            )
+                        )
+                        toastOk = res.success
+                        toast = res.message ?: if (res.success) "Adjusted" else "Failed"
+                        if (res.success) {
+                            // Refresh local item display
+                            try {
+                                val r = RetrofitClient.instance.getInventoryItem(storeId, sku)
+                                if (r.success) currentItem = r.item
+                            } catch (_: Exception) {}
+                            quantity = "1"; notes = ""
+                        }
+                    } catch (e: Exception) { toastOk = false; toast = "Error: ${e.message}" }
+                    finally { submitting = false }
+                }
+            },
+            enabled = !submitting,
+            colors = ButtonDefaults.buttonColors(containerColor = headerColor),
+            modifier = Modifier.fillMaxWidth()
+        ) {
+            if (submitting) CircularProgressIndicator(modifier = Modifier.size(18.dp), strokeWidth = 2.dp, color = Color.White)
+            else Text("SUBMIT ADJUSTMENT", fontWeight = FontWeight.Bold)
+        }
+        toast?.let {
+            Spacer(Modifier.height(10.dp))
+            Surface(color = if (toastOk) Color(0xFFECFDF5) else Color(0xFFFEF2F2), border = BorderStroke(1.dp, if (toastOk) Color(0xFF10B981) else Color(0xFFEF4444)), shape = RoundedCornerShape(4.dp)) {
+                Text(it, color = if (toastOk) Color(0xFF047857) else Color(0xFF991B1B), fontSize = 13.sp, modifier = Modifier.padding(10.dp))
+            }
+        }
+    }
+}
+
+// ---------- TRANSFERS (outbound request) ----------
+@Composable
+fun TransfersContent(storeId: String) {
+    var upc by remember { mutableStateOf("") }
+    var currentItem by remember { mutableStateOf<InventoryItem?>(null) }
+    var qty by remember { mutableStateOf("1") }
+    var otherStore by remember { mutableStateOf("") }
+    var notes by remember { mutableStateOf("") }
+    var toast by remember { mutableStateOf<String?>(null) }
+    var ok by remember { mutableStateOf(true) }
+    var submitting by remember { mutableStateOf(false) }
+    val scope = rememberCoroutineScope()
+    LaunchedEffect(upc) {
+        if (upc.isBlank()) { currentItem = null; return@LaunchedEffect }
+        try {
+            val r = RetrofitClient.instance.getInventoryItem(storeId, upc.trim())
+            if (r.success) currentItem = r.item else currentItem = null
+        } catch (_: Exception) { currentItem = null }
+    }
+    Column(modifier = Modifier.fillMaxSize().padding(16.dp).verticalScroll(rememberScrollState())) {
+        Surface(color = Color(0xFF1E3A5F), shape = RoundedCornerShape(4.dp)) {
+            Text("OUTBOUND TRANSFER REQUEST", color = Color.White, fontWeight = FontWeight.Bold, modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp))
+        }
+        Spacer(Modifier.height(10.dp))
+        Text("UPC / SKU", fontWeight = FontWeight.SemiBold, fontSize = 12.sp)
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            BasicTextField(value = upc, onValueChange = { upc = it },
+                modifier = Modifier.weight(1f).height(40.dp).border(1.dp, Color.Gray).padding(8.dp))
+            Spacer(Modifier.width(8.dp)); BarcodePlaceholder()
+        }
+        Spacer(Modifier.height(8.dp))
+        currentItem?.let {
+            Surface(color = Color(0xFFF8FAFC), border = BorderStroke(1.dp, Color(0xFFE2E8F0)), shape = RoundedCornerShape(4.dp)) {
+                Column(Modifier.padding(10.dp)) {
+                    Text(it.name, fontWeight = FontWeight.Bold)
+                    Text("OH: ${it.quantity}  ·  SKU ${it.sku}", fontSize = 12.sp, color = Color(0xFF64748B))
+                }
+            }
+            Spacer(Modifier.height(8.dp))
+        }
+        Text("Destination Store # (optional)", fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
+        BasicTextField(value = otherStore, onValueChange = { otherStore = it.filter { c -> c.isDigit() } },
+            modifier = Modifier.width(120.dp).height(40.dp).border(1.dp, Color.Gray).padding(8.dp),
+            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number))
+        Spacer(Modifier.height(8.dp))
+        Text("Quantity", fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
+        BasicTextField(value = qty, onValueChange = { qty = it.filter { c -> c.isDigit() } },
+            modifier = Modifier.width(100.dp).height(40.dp).border(1.dp, Color.Gray).padding(8.dp),
+            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number))
+        Spacer(Modifier.height(8.dp))
+        Text("Notes", fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
+        BasicTextField(value = notes, onValueChange = { notes = it },
+            modifier = Modifier.fillMaxWidth().height(60.dp).border(1.dp, Color.Gray).padding(8.dp))
+        Spacer(Modifier.height(14.dp))
+        Button(
+            onClick = {
+                val n = qty.toIntOrNull() ?: 0
+                val sku = currentItem?.sku ?: upc.trim()
+                if (sku.isBlank() || n <= 0) { ok = false; toast = "Enter a valid item and qty"; return@Button }
+                submitting = true
+                scope.launch {
+                    try {
+                        val r = RetrofitClient.instance.requestTransfer(storeId,
+                            com.github.tyke_bc.hht.network.TransferRequest(sku, n, otherStore.toIntOrNull(), notes.ifBlank { null }, MainActivity.loggedInEid.ifBlank { null }))
+                        ok = r.success; toast = r.message ?: if (r.success) "Requested" else "Failed"
+                        if (r.success) { upc = ""; qty = "1"; notes = "" }
+                    } catch (e: Exception) { ok = false; toast = e.message }
+                    finally { submitting = false }
+                }
+            },
+            enabled = !submitting, colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF1E3A5F)),
+            modifier = Modifier.fillMaxWidth()
+        ) { if (submitting) CircularProgressIndicator(modifier = Modifier.size(18.dp), strokeWidth = 2.dp, color = Color.White) else Text("REQUEST TRANSFER", fontWeight = FontWeight.Bold) }
+        toast?.let {
+            Spacer(Modifier.height(10.dp))
+            Surface(color = if (ok) Color(0xFFECFDF5) else Color(0xFFFEF2F2), border = BorderStroke(1.dp, if (ok) Color(0xFF10B981) else Color(0xFFEF4444))) {
+                Text(it, fontSize = 13.sp, modifier = Modifier.padding(10.dp))
+            }
+        }
+    }
+}
+
+// ---------- REVIEW ----------
+@Composable
+fun ReviewContent(storeId: String) {
+    var data by remember { mutableStateOf<com.github.tyke_bc.hht.network.ReviewResponse?>(null) }
+    var loading by remember { mutableStateOf(true) }
+    var err by remember { mutableStateOf<String?>(null) }
+    LaunchedEffect(Unit) {
+        try { data = RetrofitClient.instance.getReviewPending(storeId, 7) }
+        catch (e: Exception) { err = e.message }
+        finally { loading = false }
+    }
+    Column(modifier = Modifier.fillMaxSize().padding(12.dp)) {
+        Text("Review — last 7 days", fontWeight = FontWeight.Bold, fontSize = 16.sp)
+        Spacer(Modifier.height(6.dp))
+        when {
+            loading -> Box(Modifier.fillMaxSize(), Alignment.Center) { CircularProgressIndicator() }
+            err != null -> Text("Error: $err", color = Color.Red)
+            data == null -> Text("No data.", color = Color.Gray)
+            else -> {
+                val d = data!!
+                LazyColumn {
+                    item {
+                        Text("Adjustments (${d.adjustments?.size ?: 0})", fontWeight = FontWeight.SemiBold, fontSize = 13.sp, modifier = Modifier.padding(top = 6.dp))
+                    }
+                    items(d.adjustments ?: emptyList()) { a ->
+                        Surface(shape = RoundedCornerShape(4.dp), color = Color.White, border = BorderStroke(1.dp, Color(0xFFE2E8F0)), modifier = Modifier.fillMaxWidth().padding(vertical = 3.dp)) {
+                            Column(Modifier.padding(8.dp)) {
+                                Text("${a.adjustmentType} ×${a.quantity}  ·  ${a.itemName ?: a.sku}", fontWeight = FontWeight.SemiBold, fontSize = 13.sp)
+                                Text("${a.reasonCode ?: ""}  by ${a.eidName ?: a.eid ?: "?"}  ·  ${a.createdAt?.replace('T',' ')?.take(19) ?: ""}", fontSize = 11.sp, color = Color(0xFF64748B))
+                                if (!a.notes.isNullOrBlank()) Text(a.notes, fontSize = 11.sp, color = Color(0xFF475569))
+                            }
+                        }
+                    }
+                    item { Text("Pending Transfers (${d.transfers?.size ?: 0})", fontWeight = FontWeight.SemiBold, fontSize = 13.sp, modifier = Modifier.padding(top = 10.dp)) }
+                    items(d.transfers ?: emptyList()) { t ->
+                        Surface(shape = RoundedCornerShape(4.dp), color = Color.White, border = BorderStroke(1.dp, Color(0xFFE2E8F0)), modifier = Modifier.fillMaxWidth().padding(vertical = 3.dp)) {
+                            Column(Modifier.padding(8.dp)) {
+                                Text("${t.direction} ${t.quantity} × ${t.itemName ?: t.sku}", fontWeight = FontWeight.SemiBold, fontSize = 13.sp)
+                                Text("To store #${t.otherStoreId ?: "?"}  ·  ${t.status}", fontSize = 11.sp, color = Color(0xFF64748B))
+                            }
+                        }
+                    }
+                    item { Text("Failed Compliance Checks (${d.failedCompliance?.size ?: 0})", fontWeight = FontWeight.SemiBold, fontSize = 13.sp, modifier = Modifier.padding(top = 10.dp)) }
+                    items(d.failedCompliance ?: emptyList()) { c ->
+                        Surface(shape = RoundedCornerShape(4.dp), color = Color(0xFFFEF2F2), border = BorderStroke(1.dp, Color(0xFFEF4444)), modifier = Modifier.fillMaxWidth().padding(vertical = 3.dp)) {
+                            Column(Modifier.padding(8.dp)) {
+                                Text("${c.checkType}  ·  ${c.fixtureId ?: "—"}", fontWeight = FontWeight.SemiBold, fontSize = 13.sp, color = Color(0xFF991B1B))
+                                if (!c.notes.isNullOrBlank()) Text(c.notes, fontSize = 11.sp, color = Color(0xFF991B1B))
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+// ---------- NONES & TONS ----------
+@Composable
+fun NonesAndTonsContent(storeId: String) {
+    var tab by remember { mutableStateOf(0) } // 0 = Tons, 1 = Nones
+    var days by remember { mutableStateOf(30) }
+    var data by remember { mutableStateOf<com.github.tyke_bc.hht.network.MoversResponse?>(null) }
+    var loading by remember { mutableStateOf(false) }
+    LaunchedEffect(days) {
+        loading = true
+        try { data = RetrofitClient.instance.getMovers(storeId, days) } catch (_: Exception) {} finally { loading = false }
+    }
+    Column(modifier = Modifier.fillMaxSize()) {
+        Row(modifier = Modifier.fillMaxWidth().background(Color(0xFFD6D6D6))) {
+            listOf("Tons (Top Sellers)", "Nones (Dead Stock)").forEachIndexed { i, t ->
+                Box(modifier = Modifier.weight(1f).background(if (tab == i) Color(0xFFE8E8E8) else Color.Transparent).clickable { tab = i }.padding(vertical = 10.dp), contentAlignment = Alignment.Center) {
+                    Text(t, fontSize = 13.sp, color = if (tab == i) Color.Black else DGBlue)
+                }
+            }
+        }
+        Row(modifier = Modifier.padding(8.dp), verticalAlignment = Alignment.CenterVertically) {
+            Text("Window:", fontSize = 12.sp); Spacer(Modifier.width(6.dp))
+            listOf(7, 30, 90).forEach { d ->
+                Surface(color = if (days == d) DGBlue else Color(0xFFE2E8F0), shape = RoundedCornerShape(4.dp), modifier = Modifier.padding(end = 4.dp).clickable { days = d }) {
+                    Text("${d}d", color = if (days == d) Color.White else Color.Black, fontSize = 12.sp, fontWeight = FontWeight.SemiBold, modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp))
+                }
+            }
+        }
+        if (loading) { Box(Modifier.fillMaxSize(), Alignment.Center) { CircularProgressIndicator() }; return@Column }
+        val rows = if (tab == 0) data?.tons ?: emptyList() else data?.nones ?: emptyList()
+        if (rows.isEmpty()) {
+            Box(Modifier.fillMaxSize(), Alignment.Center) { Text("No data.", color = Color.Gray) }
+        } else {
+            LazyColumn(modifier = Modifier.fillMaxSize().padding(horizontal = 8.dp)) {
+                items(rows) { r ->
+                    Surface(shape = RoundedCornerShape(4.dp), color = Color.White, border = BorderStroke(1.dp, Color(0xFFE2E8F0)), modifier = Modifier.fillMaxWidth().padding(vertical = 3.dp)) {
+                        Row(modifier = Modifier.padding(8.dp), verticalAlignment = Alignment.CenterVertically) {
+                            Column(Modifier.weight(1f)) {
+                                Text(r.name ?: r.sku, fontWeight = FontWeight.SemiBold, fontSize = 13.sp)
+                                Text("SKU ${r.sku}${r.department?.let { "  ·  $it" } ?: ""}", fontSize = 10.sp, color = Color(0xFF64748B))
+                            }
+                            Column(horizontalAlignment = Alignment.End) {
+                                if (tab == 0) {
+                                    Text("×${r.unitsSold ?: 0}", fontWeight = FontWeight.Bold, fontSize = 16.sp, color = Color(0xFF10B981))
+                                    Text("$%.2f".format(r.revenue ?: 0.0), fontSize = 11.sp, color = Color(0xFF64748B))
+                                } else {
+                                    Text("OH ${r.onHand ?: 0}", fontWeight = FontWeight.Bold, fontSize = 16.sp, color = Color(0xFFEF4444))
+                                    Text("$%.2f".format(r.price ?: 0.0), fontSize = 11.sp, color = Color(0xFF64748B))
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+// ---------- COMPLIANCE CHECKLIST (shared form for walks / inspections) ----------
+@Composable
+fun ChecklistScreen(storeId: String, checkType: String, title: String, items: List<String>, headerColor: Color) {
+    val results = remember { androidx.compose.runtime.snapshots.SnapshotStateMap<String, Boolean>() }
+    var notes by remember { mutableStateOf("") }
+    var submitting by remember { mutableStateOf(false) }
+    var toast by remember { mutableStateOf<String?>(null) }
+    var ok by remember { mutableStateOf(true) }
+    val scope = rememberCoroutineScope()
+    Column(modifier = Modifier.fillMaxSize().padding(12.dp).verticalScroll(rememberScrollState())) {
+        Surface(color = headerColor, shape = RoundedCornerShape(4.dp)) {
+            Text(title, color = Color.White, fontWeight = FontWeight.Bold, modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp))
+        }
+        Spacer(Modifier.height(8.dp))
+        items.forEach { item ->
+            val passed = results[item] ?: true
+            Surface(modifier = Modifier.fillMaxWidth().padding(vertical = 3.dp), shape = RoundedCornerShape(4.dp), color = Color.White, border = BorderStroke(1.dp, Color(0xFFE2E8F0))) {
+                Row(modifier = Modifier.padding(10.dp), verticalAlignment = Alignment.CenterVertically) {
+                    Text(item, modifier = Modifier.weight(1f), fontSize = 13.sp)
+                    Surface(color = if (passed) Color(0xFF10B981) else Color(0xFFE2E8F0), shape = RoundedCornerShape(4.dp), modifier = Modifier.padding(end = 4.dp).clickable { results[item] = true }) {
+                        Text("PASS", color = if (passed) Color.White else Color.Black, fontSize = 11.sp, fontWeight = FontWeight.Bold, modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp))
+                    }
+                    Surface(color = if (!passed) Color(0xFFEF4444) else Color(0xFFE2E8F0), shape = RoundedCornerShape(4.dp), modifier = Modifier.clickable { results[item] = false }) {
+                        Text("FAIL", color = if (!passed) Color.White else Color.Black, fontSize = 11.sp, fontWeight = FontWeight.Bold, modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp))
+                    }
+                }
+            }
+        }
+        Spacer(Modifier.height(8.dp))
+        Text("Notes", fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
+        BasicTextField(value = notes, onValueChange = { notes = it },
+            modifier = Modifier.fillMaxWidth().height(70.dp).border(1.dp, Color.Gray).padding(8.dp))
+        Spacer(Modifier.height(12.dp))
+        Button(
+            onClick = {
+                submitting = true
+                scope.launch {
+                    try {
+                        val allPassed = items.all { (results[it] ?: true) }
+                        val details = items.joinToString(",") { "${it}=${if (results[it] ?: true) "PASS" else "FAIL"}" }
+                        val r = RetrofitClient.instance.submitCompliance(storeId,
+                            com.github.tyke_bc.hht.network.ComplianceRequest(checkType, null, details, allPassed, notes.ifBlank { null }, MainActivity.loggedInEid.ifBlank { null }))
+                        ok = r.success; toast = r.message ?: if (r.success) "Submitted" else "Failed"
+                        if (r.success) { results.clear(); notes = "" }
+                    } catch (e: Exception) { ok = false; toast = e.message }
+                    finally { submitting = false }
+                }
+            },
+            enabled = !submitting, colors = ButtonDefaults.buttonColors(containerColor = headerColor),
+            modifier = Modifier.fillMaxWidth()
+        ) { if (submitting) CircularProgressIndicator(modifier = Modifier.size(18.dp), strokeWidth = 2.dp, color = Color.White) else Text("SUBMIT CHECK", fontWeight = FontWeight.Bold) }
+        toast?.let {
+            Spacer(Modifier.height(10.dp))
+            Surface(color = if (ok) Color(0xFFECFDF5) else Color(0xFFFEF2F2), border = BorderStroke(1.dp, if (ok) Color(0xFF10B981) else Color(0xFFEF4444))) {
+                Text(it, fontSize = 13.sp, modifier = Modifier.padding(10.dp))
+            }
+        }
+    }
+}
+
+@Composable
+fun SafetyWalkContent(storeId: String, checkType: String) {
+    ChecklistScreen(storeId, checkType, "COOLER / FREEZER / SAFETY WALK", listOf(
+        "Cooler doors close and seal",
+        "Freezer case temps within range",
+        "No ice buildup on evaporators",
+        "Aisles clear of trip hazards",
+        "Spill kit present and stocked",
+        "Back-room floor dry",
+        "Emergency exits unblocked",
+        "Ladder stored safely"
+    ), Color(0xFFFBC02D))
+}
+
+@Composable
+fun ComplianceCheckContent(storeId: String) {
+    ChecklistScreen(storeId, "COMPLIANCE", "COMPLIANCE CHECK", listOf(
+        "Register drawer locked when unattended",
+        "Age-restricted SKUs behind counter / locked",
+        "Receipt printer has paper",
+        "Employee nametags worn",
+        "Tobacco/alcohol signage visible",
+        "Price tags match POS pricing (spot check)",
+        "No expired product on sales floor"
+    ), Color(0xFFFF6F00))
+}
+
+// ---------- REFRIGERATION MAINTENANCE (temperature log per fixture) ----------
+@Composable
+fun RefrigerationMaintenanceContent(storeId: String) {
+    val fixtures = listOf("Front Cooler", "MAG Cooler", "Open Air", "Freezer 1", "Freezer 2", "Dairy Case", "Produce Case")
+    val temps = remember { androidx.compose.runtime.snapshots.SnapshotStateMap<String, String>() }
+    var notes by remember { mutableStateOf("") }
+    var submitting by remember { mutableStateOf(false) }
+    var toast by remember { mutableStateOf<String?>(null) }
+    var ok by remember { mutableStateOf(true) }
+    val scope = rememberCoroutineScope()
+    Column(modifier = Modifier.fillMaxSize().padding(12.dp).verticalScroll(rememberScrollState())) {
+        Surface(color = DGBlue, shape = RoundedCornerShape(4.dp)) {
+            Text("REFRIGERATION TEMP LOG", color = Color.White, fontWeight = FontWeight.Bold, modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp))
+        }
+        Spacer(Modifier.height(8.dp))
+        Text("Record current temperature (°F) for each fixture. Coolers should be 34–40°F, freezers -10 to 0°F.", fontSize = 11.sp, color = Color(0xFF64748B))
+        Spacer(Modifier.height(6.dp))
+        fixtures.forEach { fx ->
+            Row(modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp), verticalAlignment = Alignment.CenterVertically) {
+                Text(fx, modifier = Modifier.weight(1f), fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
+                BasicTextField(
+                    value = temps[fx] ?: "", onValueChange = { v -> temps[fx] = v.filter { c -> c.isDigit() || c == '-' || c == '.' } },
+                    modifier = Modifier.width(80.dp).height(40.dp).border(1.dp, Color.Gray).padding(8.dp),
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                    textStyle = TextStyle(fontSize = 14.sp, textAlign = TextAlign.Center)
+                )
+                Text("°F", modifier = Modifier.padding(start = 4.dp), fontSize = 12.sp)
+            }
+        }
+        Spacer(Modifier.height(8.dp))
+        Text("Notes (issues, service needed, etc.)", fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
+        BasicTextField(value = notes, onValueChange = { notes = it },
+            modifier = Modifier.fillMaxWidth().height(60.dp).border(1.dp, Color.Gray).padding(8.dp))
+        Spacer(Modifier.height(12.dp))
+        Button(
+            onClick = {
+                submitting = true
+                scope.launch {
+                    try {
+                        val recorded = fixtures.mapNotNull { fx -> temps[fx]?.takeIf { it.isNotBlank() }?.let { "${fx}=${it}F" } }
+                        if (recorded.isEmpty()) { ok = false; toast = "Enter at least one temp"; submitting = false; return@launch }
+                        val anyOutOfRange = fixtures.any { fx ->
+                            val t = temps[fx]?.toDoubleOrNull() ?: return@any false
+                            if (fx.contains("Freezer", ignoreCase = true)) t > 0 || t < -20
+                            else t < 32 || t > 45
+                        }
+                        val r = RetrofitClient.instance.submitCompliance(storeId,
+                            com.github.tyke_bc.hht.network.ComplianceRequest("REFRIGERATION", null, recorded.joinToString(","), !anyOutOfRange, notes.ifBlank { null }, MainActivity.loggedInEid.ifBlank { null }))
+                        ok = r.success; toast = r.message ?: if (r.success) "Logged" else "Failed"
+                        if (r.success) { temps.clear(); notes = "" }
+                    } catch (e: Exception) { ok = false; toast = e.message }
+                    finally { submitting = false }
+                }
+            },
+            enabled = !submitting, colors = ButtonDefaults.buttonColors(containerColor = DGBlue),
+            modifier = Modifier.fillMaxWidth()
+        ) { if (submitting) CircularProgressIndicator(modifier = Modifier.size(18.dp), strokeWidth = 2.dp, color = Color.White) else Text("LOG TEMPS", fontWeight = FontWeight.Bold) }
+        toast?.let {
+            Spacer(Modifier.height(10.dp))
+            Surface(color = if (ok) Color(0xFFECFDF5) else Color(0xFFFEF2F2), border = BorderStroke(1.dp, if (ok) Color(0xFF10B981) else Color(0xFFEF4444))) {
+                Text(it, fontSize = 13.sp, modifier = Modifier.padding(10.dp))
             }
         }
     }
@@ -1004,25 +1784,37 @@ fun LocationCard(item: InventoryItem) {
 
 @Composable
 fun AdjustmentsDamagesContent(upcInput: String, onUpcChange: (String) -> Unit) {
-    Column(modifier = Modifier.padding(16.dp)) {
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            BasicTextField(value = upcInput, onValueChange = onUpcChange, modifier = Modifier.weight(1f).height(40.dp).border(1.dp, Color.Gray).padding(8.dp))
-            Spacer(modifier = Modifier.width(8.dp)); BarcodePlaceholder()
-        }
-        Spacer(modifier = Modifier.height(24.dp))
-        listOf("Regular Price:", "Location:", "Reason Code:", "Current OH:", "Adjustment Qty:").forEach { Text(it, fontWeight = FontWeight.Bold, modifier = Modifier.padding(vertical = 8.dp)) }
-    }
+    AdjustmentFormHost(upcInput, onUpcChange, "DAMAGES",
+        listOf("DMG", "SHRINK", "EXPIRED", "RECALL"),
+        "DAMAGED / SHRINK / EXPIRED", Color(0xFFEF4444))
 }
 
 @Composable
 fun AdjustmentsStoreUseContent(upcInput: String, onUpcChange: (String) -> Unit) {
-    Column(modifier = Modifier.padding(16.dp)) {
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            BasicTextField(value = upcInput, onValueChange = onUpcChange, modifier = Modifier.weight(1f).height(40.dp).border(1.dp, Color.Gray).padding(8.dp))
-            Spacer(modifier = Modifier.width(8.dp)); BarcodePlaceholder()
+    AdjustmentFormHost(upcInput, onUpcChange, "STORE_USE",
+        listOf("CLEANING", "BREAKROOM", "OFFICE", "TRAINING", "OTHER"),
+        "STORE USE", Color(0xFF2563EB))
+}
+
+// Host needs the current storeId — plumbed via a CompositionLocal so we don't have to rewrite the Adjustments call sites.
+val LocalStoreId = androidx.compose.runtime.compositionLocalOf { "" }
+
+@Composable
+fun AdjustmentFormHost(
+    upcInput: String,
+    onUpcChange: (String) -> Unit,
+    adjustmentType: String,
+    reasons: List<String>,
+    headerLabel: String,
+    headerColor: Color
+) {
+    val storeId = LocalStoreId.current
+    if (storeId.isBlank()) {
+        Box(Modifier.fillMaxSize(), Alignment.Center) {
+            Text("No store context — re-open Adjustments from Home.", color = Color.Gray)
         }
-        Spacer(modifier = Modifier.height(24.dp))
-        listOf("Promo Price:", "Regular Price:", "Current OH:", "Quantity:").forEach { Text(it, fontWeight = FontWeight.Bold, modifier = Modifier.padding(vertical = 8.dp)) }
+    } else {
+        AdjustmentForm(storeId, upcInput, onUpcChange, adjustmentType, reasons, headerLabel, headerColor)
     }
 }
 
@@ -1150,8 +1942,6 @@ fun TransfersOutgoingContent() { Box(modifier = Modifier.fillMaxSize()) { Text("
 fun TransfersIncomingContent() { Box(modifier = Modifier.fillMaxSize()) { Text("Incoming Transfers", modifier = Modifier.align(Alignment.Center)) } }
 @Composable
 fun TransfersMisShipContent() { Box(modifier = Modifier.fillMaxSize()) { Text("Mis-Ship Transfers", modifier = Modifier.align(Alignment.Center)) } }
-@Composable
-fun TransfersPRPContent() { Box(modifier = Modifier.fillMaxSize()) { Text("PRP Transfers", modifier = Modifier.align(Alignment.Center)) } }
 
 @Composable
 fun BarcodePlaceholder() {
@@ -1424,7 +2214,553 @@ data class CycleCountItemState(
     val sku: String,
     val name: String,
     val upc: String?,
-    val shelf: String,
+    val shelf: String?,
     val faces: String?,
     val systemQty: Int
 )
+
+// ---------- VENDOR DELIVERY (HHT scan-in on vendor drop-off) ----------
+// Flow: scan the VO-{id} barcode on a DSD order sheet → shows expected items →
+// scan each item on the floor → dialog pre-fills with remaining-to-receive →
+// strict: items NOT on the order are rejected by the server.
+@Composable
+fun VendorDeliveryContent(storeId: String, scannedUpc: String, onScanConsumed: () -> Unit) {
+    val VendorGreen = Color(0xFF059669)
+    val scope = rememberCoroutineScope()
+
+    // Session state
+    var order by remember { mutableStateOf<com.github.tyke_bc.hht.network.VendorOrder?>(null) }
+    var vendor by remember { mutableStateOf<com.github.tyke_bc.hht.network.Vendor?>(null) }
+    var orderItems by remember { mutableStateOf<List<com.github.tyke_bc.hht.network.VendorOrderItem>>(emptyList()) }
+    var delivery by remember { mutableStateOf<com.github.tyke_bc.hht.network.VendorDelivery?>(null) }
+    var deliveryItems by remember { mutableStateOf<List<com.github.tyke_bc.hht.network.VendorDeliveryItem>>(emptyList()) }
+    var loading by remember { mutableStateOf(false) }
+    var toast by remember { mutableStateOf<String?>(null) }
+    var toastOk by remember { mutableStateOf(true) }
+
+    // Scan dialog state
+    var showQtyDialog by remember { mutableStateOf(false) }
+    var scannedItem by remember { mutableStateOf<InventoryItem?>(null) }
+    var scanQty by remember { mutableStateOf("1") }
+    var expectedQty by remember { mutableStateOf<Int?>(null) }
+    var alreadyReceived by remember { mutableStateOf(0) }
+
+    // Received-per-SKU aggregate for variance display
+    val receivedBySku: Map<String, Int> = deliveryItems.groupBy { it.sku }.mapValues { (_, list) -> list.sumOf { it.quantityReceived } }
+
+    suspend fun loadDelivery(deliveryId: Int) {
+        try {
+            val r = RetrofitClient.instance.getVendorDelivery(storeId, deliveryId)
+            if (r.success) { delivery = r.delivery; deliveryItems = r.items ?: emptyList() }
+        } catch (e: Exception) { toastOk = false; toast = e.message }
+    }
+
+    suspend fun resumeIfOpen() {
+        loading = true
+        try {
+            val opens = RetrofitClient.instance.getVendorDeliveries(storeId).filter { it.status == "OPEN" && it.orderId != null }
+            val open = opens.firstOrNull() ?: return
+            // Rehydrate: fetch the linked order + its items
+            val detail = RetrofitClient.instance.getVendorDelivery(storeId, open.id)
+            if (!detail.success || detail.delivery == null) return
+            val oid = detail.delivery.orderId ?: return
+            val resolved = RetrofitClient.instance.resolveVendorOrder(storeId, "VO-$oid")
+            if (resolved.success) {
+                order = resolved.order
+                vendor = resolved.vendor
+                orderItems = resolved.items ?: emptyList()
+                delivery = detail.delivery
+                deliveryItems = detail.items ?: emptyList()
+            }
+        } catch (_: Exception) {} finally { loading = false }
+    }
+
+    LaunchedEffect(Unit) { resumeIfOpen() }
+
+    // Scan handling: in the "landing" (no delivery yet) state, treat scans as order barcodes.
+    // In the active state, treat scans as item UPC/SKU lookups against the order's expected list.
+    LaunchedEffect(scannedUpc) {
+        val raw = scannedUpc.trim()
+        if (raw.isBlank()) return@LaunchedEffect
+
+        if (delivery == null) {
+            // Treat as a VO-{id} barcode
+            loading = true
+            try {
+                val resolved = RetrofitClient.instance.resolveVendorOrder(storeId, raw)
+                if (!resolved.success || resolved.order == null) {
+                    toastOk = false; toast = resolved.message ?: "Couldn't open order for \"$raw\""
+                } else if (resolved.existingDeliveryId != null) {
+                    // Resume existing delivery
+                    order = resolved.order; vendor = resolved.vendor; orderItems = resolved.items ?: emptyList()
+                    loadDelivery(resolved.existingDeliveryId!!)
+                    toastOk = true; toast = "Resumed delivery for ${resolved.order.vendorName ?: "vendor"}"
+                } else {
+                    // Create a new delivery LINKED to this order (order_id is what the strict server check keys on)
+                    val created = RetrofitClient.instance.createVendorDelivery(storeId,
+                        com.github.tyke_bc.hht.network.CreateVendorDeliveryRequest(
+                            vendorId = resolved.order.vendorId,
+                            orderId = resolved.order.id,
+                            repName = resolved.order.repName,
+                            invoiceNumber = null,
+                            notes = null,
+                            eid = MainActivity.loggedInEid.ifBlank { null }))
+                    if (created.success && created.id != null) {
+                        order = resolved.order; vendor = resolved.vendor; orderItems = resolved.items ?: emptyList()
+                        loadDelivery(created.id)
+                        toastOk = true; toast = "Delivery opened for ${resolved.vendor?.name ?: "vendor"}"
+                    } else {
+                        toastOk = false; toast = created.message ?: "Failed to start delivery"
+                    }
+                }
+            } catch (e: Exception) { toastOk = false; toast = e.message }
+            finally { loading = false; onScanConsumed() }
+        } else {
+            // Active — treat as item UPC/SKU scan
+            try {
+                val inv = RetrofitClient.instance.getInventoryItem(storeId, raw)
+                if (!inv.success || inv.item == null) { toastOk = false; toast = "Item not found: $raw"; onScanConsumed(); return@LaunchedEffect }
+                val sku = inv.item.sku
+                val onOrder = orderItems.find { it.sku == sku }
+                if (onOrder == null) {
+                    toastOk = false; toast = "\"${inv.item.name}\" isn't on this order — vendor must reconcile."
+                    onScanConsumed()
+                    return@LaunchedEffect
+                }
+                val alreadyGot = receivedBySku[sku] ?: 0
+                val remaining = (onOrder.quantityRequested - alreadyGot).coerceAtLeast(1)
+                scannedItem = inv.item
+                expectedQty = onOrder.quantityRequested
+                alreadyReceived = alreadyGot
+                scanQty = remaining.toString()
+                showQtyDialog = true
+            } catch (e: Exception) { toastOk = false; toast = e.message }
+            onScanConsumed()
+        }
+    }
+
+    Column(modifier = Modifier.fillMaxSize()) {
+        Surface(color = VendorGreen, modifier = Modifier.fillMaxWidth()) {
+            Row(modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) {
+                Text("VENDOR DELIVERY", color = Color.White, fontWeight = FontWeight.Bold, fontSize = 15.sp, modifier = Modifier.weight(1f))
+                delivery?.let {
+                    Text("${vendor?.code ?: "—"} · Order #${order?.id ?: "?"}", color = Color.White, fontSize = 12.sp)
+                }
+            }
+        }
+
+        if (loading) { Box(Modifier.fillMaxWidth().weight(1f), Alignment.Center) { CircularProgressIndicator() }; return@Column }
+
+        if (delivery == null) {
+            // Landing — prompt to scan the VO-{id} barcode
+            Column(Modifier.fillMaxWidth().weight(1f).padding(20.dp), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.Center) {
+                Icon(Icons.Default.QrCodeScanner, contentDescription = null, tint = VendorGreen, modifier = Modifier.size(64.dp))
+                Spacer(Modifier.height(12.dp))
+                Text("Scan the order barcode", fontWeight = FontWeight.Bold, fontSize = 16.sp)
+                Spacer(Modifier.height(6.dp))
+                Text("Find the Code128 barcode labelled \"VO-###\" at the top of the DSD order sheet the vendor handed you. Scan it to load the expected items.",
+                    fontSize = 13.sp, color = Color(0xFF64748B), textAlign = TextAlign.Center)
+                Spacer(Modifier.height(14.dp))
+                Surface(color = Color(0xFFFEF3C7), border = BorderStroke(1.dp, Color(0xFFF59E0B)), shape = RoundedCornerShape(6.dp)) {
+                    Text("Only SUBMITTED orders can be received against. Ad-hoc walk-in deliveries must be entered in the backoffice first.",
+                        fontSize = 11.sp, color = Color(0xFF92400E), modifier = Modifier.padding(10.dp))
+                }
+            }
+        } else {
+            // Active — expected items list with received-so-far and variance
+            LazyColumn(modifier = Modifier.fillMaxWidth().weight(1f).padding(horizontal = 10.dp)) {
+                item {
+                    Spacer(Modifier.height(8.dp))
+                    Surface(color = Color(0xFFF8FAFC), border = BorderStroke(1.dp, Color(0xFFE2E8F0)), shape = RoundedCornerShape(4.dp)) {
+                        Column(Modifier.padding(10.dp)) {
+                            Text(vendor?.name ?: "—", fontWeight = FontWeight.Bold)
+                            Text("Order #${order?.id ?: "?"}  ·  Rep: ${order?.repName ?: "—"}", fontSize = 11.sp, color = Color(0xFF64748B))
+                            Text("Scan each item on the invoice. Dialog pre-fills with remaining qty.", fontSize = 11.sp, color = Color(0xFF64748B))
+                        }
+                    }
+                    Spacer(Modifier.height(8.dp))
+                    val receivedLines = orderItems.count { (receivedBySku[it.sku] ?: 0) > 0 }
+                    val totalExp = orderItems.sumOf { it.quantityRequested }
+                    val totalRcv = deliveryItems.sumOf { it.quantityReceived }
+                    Text("$receivedLines / ${orderItems.size} lines received  ·  $totalRcv / $totalExp units",
+                        fontSize = 12.sp, fontWeight = FontWeight.SemiBold, color = VendorGreen)
+                    Spacer(Modifier.height(6.dp))
+                }
+                if (orderItems.isEmpty()) {
+                    item { Text("Order has no items (unusual).", color = Color.Gray, fontSize = 13.sp, modifier = Modifier.padding(vertical = 8.dp)) }
+                } else {
+                    items(orderItems) { oi ->
+                        val rcv = receivedBySku[oi.sku] ?: 0
+                        val variance = rcv - oi.quantityRequested
+                        val fullyReceived = rcv >= oi.quantityRequested
+                        val short = rcv in 1 until oi.quantityRequested
+                        val accentColor = when {
+                            fullyReceived && variance == 0 -> Color(0xFF10B981)
+                            fullyReceived && variance > 0 -> Color(0xFFF59E0B)    // over
+                            short -> Color(0xFFF59E0B)
+                            else -> Color(0xFF94A3B8)                              // not yet received
+                        }
+                        Surface(shape = RoundedCornerShape(4.dp), color = Color.White,
+                            border = BorderStroke(1.dp, if (fullyReceived) accentColor.copy(alpha = 0.5f) else Color(0xFFE2E8F0)),
+                            modifier = Modifier.fillMaxWidth().padding(vertical = 3.dp)) {
+                            Row(Modifier.padding(10.dp), verticalAlignment = Alignment.CenterVertically) {
+                                Column(Modifier.weight(1f)) {
+                                    Text(oi.name ?: oi.sku, fontWeight = FontWeight.SemiBold, fontSize = 13.sp)
+                                    Text("SKU ${oi.sku}  ·  ordered ×${oi.quantityRequested}${if (rcv > 0) "  ·  received ×$rcv" else ""}",
+                                        fontSize = 11.sp, color = Color(0xFF64748B))
+                                    if (variance != 0 && rcv > 0) {
+                                        val signed = if (variance > 0) "+$variance over" else "$variance short"
+                                        Text(signed, fontSize = 11.sp, fontWeight = FontWeight.SemiBold, color = Color(0xFFB45309))
+                                    }
+                                }
+                                if (fullyReceived) {
+                                    Icon(Icons.Default.CheckCircle, contentDescription = null, tint = accentColor)
+                                } else {
+                                    Text(if (rcv > 0) "$rcv/${oi.quantityRequested}" else "—",
+                                        fontWeight = FontWeight.Bold, fontSize = 15.sp, color = accentColor)
+                                }
+                            }
+                        }
+                    }
+                }
+                item { Spacer(Modifier.height(80.dp)) }
+            }
+
+            // Action bar
+            Surface(color = Color(0xFFF1F5F9), modifier = Modifier.fillMaxWidth()) {
+                Row(Modifier.padding(10.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Button(
+                        onClick = {
+                            scope.launch {
+                                try {
+                                    val r = RetrofitClient.instance.completeVendorDelivery(storeId, delivery!!.id)
+                                    if (r.success) {
+                                        toastOk = true; toast = "Delivery completed. Order marked FULFILLED."
+                                        order = null; vendor = null; orderItems = emptyList()
+                                        delivery = null; deliveryItems = emptyList()
+                                    } else { toastOk = false; toast = r.message ?: "Failed" }
+                                } catch (e: Exception) { toastOk = false; toast = e.message }
+                            }
+                        },
+                        enabled = deliveryItems.isNotEmpty(),
+                        colors = ButtonDefaults.buttonColors(containerColor = VendorGreen),
+                        modifier = Modifier.fillMaxWidth()
+                    ) { Text("COMPLETE DELIVERY", fontWeight = FontWeight.Bold) }
+                }
+            }
+        }
+
+        toast?.let {
+            Surface(color = if (toastOk) Color(0xFFECFDF5) else Color(0xFFFEF2F2),
+                border = BorderStroke(1.dp, if (toastOk) Color(0xFF10B981) else Color(0xFFEF4444)),
+                modifier = Modifier.fillMaxWidth()) {
+                Text(it, fontSize = 12.sp, modifier = Modifier.padding(8.dp))
+            }
+        }
+    }
+
+    // Quantity dialog on scan
+    if (showQtyDialog && scannedItem != null) {
+        AlertDialog(
+            onDismissRequest = { showQtyDialog = false; scannedItem = null },
+            title = { Text("Receive: ${scannedItem!!.name}") },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                    Text("SKU ${scannedItem!!.sku}  ·  OH ${scannedItem!!.quantity}", fontSize = 11.sp, color = Color(0xFF64748B))
+                    expectedQty?.let {
+                        Text("Ordered: $it  ·  Already received: $alreadyReceived", fontSize = 12.sp, fontWeight = FontWeight.SemiBold, color = VendorGreen)
+                    }
+                    Spacer(Modifier.height(4.dp))
+                    Text("Units received (this scan)", fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
+                    BasicTextField(
+                        value = scanQty,
+                        onValueChange = { scanQty = it.filter { c -> c.isDigit() } },
+                        modifier = Modifier.width(120.dp).height(40.dp).border(1.dp, Color.Gray).padding(8.dp),
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number)
+                    )
+                }
+            },
+            confirmButton = {
+                Button(onClick = {
+                    val q = scanQty.toIntOrNull() ?: 0
+                    if (q <= 0) { toastOk = false; toast = "Enter a positive qty"; return@Button }
+                    scope.launch {
+                        try {
+                            val r = RetrofitClient.instance.scanVendorDelivery(storeId, delivery!!.id,
+                                com.github.tyke_bc.hht.network.VendorDeliveryScanRequest(
+                                    scannedItem!!.sku, q, MainActivity.loggedInEid.ifBlank { null }))
+                            if (r.success) {
+                                toastOk = true; toast = "+$q ${r.name ?: ""}  → OH ${r.newQuantity ?: "?"}"
+                                showQtyDialog = false; scannedItem = null
+                                loadDelivery(delivery!!.id)
+                            } else { toastOk = false; toast = r.message ?: "Failed" }
+                        } catch (e: Exception) { toastOk = false; toast = e.message }
+                    }
+                }, colors = ButtonDefaults.buttonColors(containerColor = VendorGreen)) { Text("RECEIVE") }
+            },
+            dismissButton = { TextButton(onClick = { showQtyDialog = false; scannedItem = null }) { Text("Cancel") } }
+        )
+    }
+}
+
+// ---------- PRP RETURNS ----------
+@Composable
+fun PrpReturnsContent(storeId: String, scannedUpc: String, onScanConsumed: () -> Unit) {
+    val PrpBrown = Color(0xFF5D4037)
+    val reasonCodes = listOf("DEFECTIVE", "RECALL", "EXPIRED", "MFG_DEFECT", "VENDOR_RETURN", "CUSTOMER_RETURN")
+
+    val scope = rememberCoroutineScope()
+    var batch by remember { mutableStateOf<com.github.tyke_bc.hht.network.PrpBatch?>(null) }
+    var items by remember { mutableStateOf<List<com.github.tyke_bc.hht.network.PrpBatchItem>>(emptyList()) }
+    var loading by remember { mutableStateOf(true) }
+    var toast by remember { mutableStateOf<String?>(null) }
+    var toastOk by remember { mutableStateOf(true) }
+
+    var showAddDialog by remember { mutableStateOf(false) }
+    var addItem by remember { mutableStateOf<InventoryItem?>(null) }
+    var addQty by remember { mutableStateOf("1") }
+    var addReason by remember { mutableStateOf(reasonCodes[0]) }
+    var addNotes by remember { mutableStateOf("") }
+    var addSubmitting by remember { mutableStateOf(false) }
+
+    var showCloseDialog by remember { mutableStateOf(false) }
+    var showShipDialog by remember { mutableStateOf(false) }
+    var shipCarrier by remember { mutableStateOf("") }
+    var shipTracking by remember { mutableStateOf("") }
+
+    suspend fun refreshOpen() {
+        loading = true
+        try {
+            val list = RetrofitClient.instance.getPrpBatches(storeId)
+            val open = list.firstOrNull { it.status == "OPEN" }
+            if (open != null) {
+                val detail = RetrofitClient.instance.getPrpBatch(storeId, open.id)
+                if (detail.success) { batch = detail.batch; items = detail.items ?: emptyList() }
+            } else { batch = null; items = emptyList() }
+        } catch (e: Exception) { toastOk = false; toast = e.message } finally { loading = false }
+    }
+
+    LaunchedEffect(Unit) { refreshOpen() }
+
+    // React to scans while in this screen
+    LaunchedEffect(scannedUpc) {
+        if (scannedUpc.isBlank()) return@LaunchedEffect
+        if (batch == null) { toastOk = false; toast = "Start a batch first."; onScanConsumed(); return@LaunchedEffect }
+        try {
+            val inv = RetrofitClient.instance.getInventoryItem(storeId, scannedUpc.trim())
+            if (!inv.success || inv.item == null) { toastOk = false; toast = "Item not found: $scannedUpc" }
+            else {
+                addItem = inv.item
+                addQty = "1"; addReason = reasonCodes[0]; addNotes = ""
+                showAddDialog = true
+            }
+        } catch (e: Exception) { toastOk = false; toast = e.message }
+        onScanConsumed()
+    }
+
+    Column(modifier = Modifier.fillMaxSize()) {
+        // Header
+        Surface(color = PrpBrown, modifier = Modifier.fillMaxWidth()) {
+            Row(modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) {
+                Text("PRP RETURNS", color = Color.White, fontWeight = FontWeight.Bold, fontSize = 15.sp, modifier = Modifier.weight(1f))
+                if (batch != null) Text("Batch #${batch!!.id}  ·  ${items.size} lines", color = Color.White, fontSize = 12.sp)
+            }
+        }
+
+        if (loading) { Box(Modifier.fillMaxWidth().weight(1f), Alignment.Center) { CircularProgressIndicator() }; return@Column }
+
+        if (batch == null) {
+            // Empty state — offer to start a batch
+            Column(Modifier.fillMaxWidth().weight(1f).padding(20.dp), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.Center) {
+                Text("No open PRP batch", fontWeight = FontWeight.Bold, fontSize = 16.sp)
+                Spacer(Modifier.height(6.dp))
+                Text("Start a new batch to begin scanning items for return.", fontSize = 13.sp, color = Color(0xFF64748B), textAlign = TextAlign.Center)
+                Spacer(Modifier.height(16.dp))
+                Button(
+                    onClick = {
+                        scope.launch {
+                            try {
+                                val res = RetrofitClient.instance.createPrpBatch(storeId,
+                                    com.github.tyke_bc.hht.network.CreatePrpBatchRequest(null, null, MainActivity.loggedInEid.ifBlank { null }))
+                                toastOk = res.success; toast = res.message ?: (if (res.success) "Batch opened" else "Failed")
+                                if (res.success) refreshOpen()
+                            } catch (e: Exception) { toastOk = false; toast = e.message }
+                        }
+                    },
+                    colors = ButtonDefaults.buttonColors(containerColor = PrpBrown)
+                ) { Text("START NEW BATCH", fontWeight = FontWeight.Bold) }
+            }
+        } else {
+            // Batch view
+            LazyColumn(modifier = Modifier.fillMaxWidth().weight(1f).padding(horizontal = 10.dp)) {
+                item {
+                    Spacer(Modifier.height(8.dp))
+                    Surface(color = Color(0xFFF8FAFC), border = BorderStroke(1.dp, Color(0xFFE2E8F0)), shape = RoundedCornerShape(4.dp)) {
+                        Column(Modifier.padding(10.dp)) {
+                            Text("Scan a UPC/SKU to add it to this batch.", fontSize = 12.sp, color = Color(0xFF64748B))
+                            if (batch!!.vendor != null) Text("Vendor: ${batch!!.vendor}", fontSize = 12.sp)
+                            if (batch!!.notes != null) Text("Notes: ${batch!!.notes}", fontSize = 12.sp)
+                        }
+                    }
+                    Spacer(Modifier.height(8.dp))
+                }
+                if (items.isEmpty()) {
+                    item { Text("No items yet — scan something to get started.", color = Color.Gray, fontSize = 13.sp, modifier = Modifier.padding(vertical = 8.dp)) }
+                } else {
+                    items(items) { it ->
+                        Surface(shape = RoundedCornerShape(4.dp), color = Color.White, border = BorderStroke(1.dp, Color(0xFFE2E8F0)), modifier = Modifier.fillMaxWidth().padding(vertical = 3.dp)) {
+                            Row(modifier = Modifier.padding(10.dp), verticalAlignment = Alignment.CenterVertically) {
+                                Column(Modifier.weight(1f)) {
+                                    Text(it.name ?: it.sku, fontWeight = FontWeight.SemiBold, fontSize = 13.sp)
+                                    Text("SKU ${it.sku}  ·  ${it.reasonCode}  ·  ×${it.quantity}", fontSize = 11.sp, color = Color(0xFF64748B))
+                                    if (!it.notes.isNullOrBlank()) Text(it.notes, fontSize = 11.sp, color = Color(0xFF475569))
+                                }
+                                TextButton(onClick = {
+                                    scope.launch {
+                                        try {
+                                            val r = RetrofitClient.instance.removePrpItem(storeId, batch!!.id, it.id)
+                                            toastOk = r.success; toast = r.message ?: "Removed"
+                                            if (r.success) refreshOpen()
+                                        } catch (e: Exception) { toastOk = false; toast = e.message }
+                                    }
+                                }) { Text("Remove", color = Color(0xFFEF4444), fontSize = 11.sp) }
+                            }
+                        }
+                    }
+                }
+                item { Spacer(Modifier.height(80.dp)) } // breathing room above action bar
+            }
+        }
+
+        // Action bar for open batch
+        if (batch != null) {
+            Surface(color = Color(0xFFF1F5F9), modifier = Modifier.fillMaxWidth()) {
+                Row(modifier = Modifier.padding(10.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    OutlinedButton(
+                        onClick = { showCloseDialog = true },
+                        enabled = items.isNotEmpty(),
+                        modifier = Modifier.weight(1f)
+                    ) { Text("CLOSE", fontSize = 12.sp) }
+                    Button(
+                        onClick = {
+                            scope.launch {
+                                try {
+                                    val r = RetrofitClient.instance.printPrpManifest(storeId, batch!!.id)
+                                    toastOk = r.success; toast = r.message ?: "Sent to printer"
+                                } catch (e: Exception) { toastOk = false; toast = e.message }
+                            }
+                        },
+                        enabled = items.isNotEmpty(),
+                        colors = ButtonDefaults.buttonColors(containerColor = PrpBrown),
+                        modifier = Modifier.weight(1f)
+                    ) { Text("PRINT", fontSize = 12.sp) }
+                }
+            }
+        }
+
+        toast?.let {
+            Surface(color = if (toastOk) Color(0xFFECFDF5) else Color(0xFFFEF2F2), border = BorderStroke(1.dp, if (toastOk) Color(0xFF10B981) else Color(0xFFEF4444)), modifier = Modifier.fillMaxWidth()) {
+                Text(it, fontSize = 12.sp, modifier = Modifier.padding(8.dp))
+            }
+        }
+    }
+
+    // Add item dialog
+    if (showAddDialog && addItem != null) {
+        AlertDialog(
+            onDismissRequest = { showAddDialog = false; addItem = null },
+            title = { Text("Add to Batch #${batch?.id ?: "?"}") },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                    Text(addItem!!.name, fontWeight = FontWeight.Bold)
+                    Text("SKU ${addItem!!.sku}  ·  OH ${addItem!!.quantity}", fontSize = 11.sp, color = Color(0xFF64748B))
+                    Spacer(Modifier.height(4.dp))
+                    Text("Quantity", fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
+                    BasicTextField(
+                        value = addQty,
+                        onValueChange = { addQty = it.filter { c -> c.isDigit() } },
+                        modifier = Modifier.width(100.dp).height(40.dp).border(1.dp, Color.Gray).padding(8.dp),
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number)
+                    )
+                    Text("Reason", fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
+                    Column(modifier = Modifier.fillMaxWidth()) {
+                        reasonCodes.chunked(2).forEach { row ->
+                            Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                                row.forEach { rc ->
+                                    val selected = addReason == rc
+                                    Surface(
+                                        color = if (selected) PrpBrown else Color(0xFFE2E8F0),
+                                        shape = RoundedCornerShape(4.dp),
+                                        modifier = Modifier.weight(1f).clickable { addReason = rc }
+                                    ) {
+                                        Text(rc, color = if (selected) Color.White else Color.Black, fontSize = 11.sp, fontWeight = FontWeight.SemiBold, textAlign = TextAlign.Center, modifier = Modifier.padding(vertical = 6.dp))
+                                    }
+                                }
+                                if (row.size == 1) Spacer(Modifier.weight(1f))
+                            }
+                            Spacer(Modifier.height(4.dp))
+                        }
+                    }
+                    Text("Notes (optional)", fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
+                    BasicTextField(
+                        value = addNotes, onValueChange = { addNotes = it },
+                        modifier = Modifier.fillMaxWidth().height(50.dp).border(1.dp, Color.Gray).padding(8.dp)
+                    )
+                }
+            },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        val q = addQty.toIntOrNull() ?: 0
+                        if (q <= 0) { toastOk = false; toast = "Enter a positive quantity"; return@Button }
+                        addSubmitting = true
+                        scope.launch {
+                            try {
+                                val r = RetrofitClient.instance.addPrpItem(
+                                    storeId, batch!!.id,
+                                    com.github.tyke_bc.hht.network.AddPrpItemRequest(
+                                        addItem!!.sku, q, addReason, addNotes.ifBlank { null },
+                                        MainActivity.loggedInEid.ifBlank { null }
+                                    )
+                                )
+                                toastOk = r.success; toast = r.message ?: (if (r.success) "Added" else "Failed")
+                                if (r.success) { showAddDialog = false; addItem = null; refreshOpen() }
+                            } catch (e: Exception) { toastOk = false; toast = e.message }
+                            finally { addSubmitting = false }
+                        }
+                    },
+                    enabled = !addSubmitting,
+                    colors = ButtonDefaults.buttonColors(containerColor = PrpBrown)
+                ) { Text(if (addSubmitting) "…" else "ADD") }
+            },
+            dismissButton = { TextButton(onClick = { showAddDialog = false; addItem = null }) { Text("Cancel") } }
+        )
+    }
+
+    // Close dialog
+    if (showCloseDialog && batch != null) {
+        AlertDialog(
+            onDismissRequest = { showCloseDialog = false },
+            title = { Text("Close Batch #${batch!!.id}?") },
+            text = { Text("Closing locks the batch. You won't be able to add or remove items. Proceed?") },
+            confirmButton = {
+                Button(onClick = {
+                    scope.launch {
+                        try {
+                            val r = RetrofitClient.instance.closePrpBatch(storeId, batch!!.id,
+                                com.github.tyke_bc.hht.network.ClosePrpBatchRequest(MainActivity.loggedInEid.ifBlank { null }))
+                            toastOk = r.success; toast = r.message ?: "Closed"
+                            if (r.success) {
+                                // Auto-print manifest on close
+                                try { RetrofitClient.instance.printPrpManifest(storeId, batch!!.id) } catch (_: Exception) {}
+                                refreshOpen()
+                            }
+                        } catch (e: Exception) { toastOk = false; toast = e.message }
+                        finally { showCloseDialog = false }
+                    }
+                }, colors = ButtonDefaults.buttonColors(containerColor = PrpBrown)) { Text("CLOSE & PRINT") }
+            },
+            dismissButton = { TextButton(onClick = { showCloseDialog = false }) { Text("Cancel") } }
+        )
+    }
+}

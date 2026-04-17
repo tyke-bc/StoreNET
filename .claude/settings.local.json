@@ -5,7 +5,27 @@
       "Read(//c/Users/User/.gemini/**)",
       "Bash(python:*)",
       "Bash(JAVA_HOME=\"/c/Program Files/Eclipse Adoptium/jdk-17.0.17.10-hotspot\" ./gradlew assembleDebug)",
-      "Bash(JAVA_HOME=\"/c/Program Files/Java/jdk-25\" ./gradlew assembleDebug)"
+      "Bash(JAVA_HOME=\"/c/Program Files/Java/jdk-25\" ./gradlew assembleDebug)",
+      "Bash(ssh -o StrictHostKeyChecking=no coleton@192.168.0.192 \"mysql -u root -prose copotrain StoreNET -e 'SHOW TABLES;' 2>/dev/null || mariadb -u root StoreNET -e 'SHOW TABLES;' 2>/dev/null || mysql -u coleton StoreNET -e 'SHOW TABLES;' 2>/dev/null || echo 'trying without pw' && mysql StoreNET -e 'SHOW TABLES;'\")",
+      "Bash(sshpass -p 'roscopecoltrain' ssh -o StrictHostKeyChecking=no coleton@192.168.0.192 \"echo connected\")",
+      "Bash(where plink:*)",
+      "Bash(where putty:*)",
+      "Bash(python3 -c \"import paramiko; print\\('paramiko ok'\\)\")",
+      "Bash(pip install:*)",
+      "Bash(python3 -c ':*)",
+      "Bash(ls -la /c/Users/colet/Documents/GitHub/StoreNET/*.har)",
+      "WebSearch",
+      "WebFetch(domain:www.manualslib.com)",
+      "WebFetch(domain:www.bilkur.com)",
+      "WebFetch(domain:www.hiv-hoffmann.de)",
+      "Bash(sshpass -p 'roscopecoltrain' ssh -o StrictHostKeyChecking=no coleton@192.168.0.192 \"sudo mariadb -e \\\\\"UPDATE storenet_enterprise.master_inventory SET pack_size = 6; SELECT ROW_COUNT\\(\\) AS rows_updated_master;\\\\\"\")",
+      "Bash(npm install:*)",
+      "Bash(grep -r \"section.*NULL\\\\|shelf.*NULL\\\\|optional.*section\\\\|optional.*shelf\" /c/Users/colet/Documents/GitHub/StoreNET/backoffice_web/*.js --include=\"*.js\")",
+      "Bash(magick -version)",
+      "Bash(ffmpeg -i /c/Users/colet/Downloads/IMG_1621.HEIC -y /tmp/img1621.jpg)",
+      "Bash(ffmpeg -i /c/Users/colet/Downloads/IMG_1621.HEIC -vf scale=1024:-1 -frames:v 1 -y -update 1 /tmp/img1621.jpg)",
+      "Bash(ffmpeg -i /c/Users/colet/Downloads/IMG_1621.HEIC -frames:v 1 -q:v 5 -y -update 1 /tmp/img1621b.jpg)",
+      "Bash(node -c server.js)"
     ]
   }
 }

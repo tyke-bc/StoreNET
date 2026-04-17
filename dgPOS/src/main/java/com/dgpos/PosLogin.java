@@ -19,10 +19,13 @@ public class PosLogin extends Application {
     private TextField employeeIdField;
     private Label warningLabel;
     private Button clockInOutBtn;
-    
+
     private VBox centerContent;
     private GridPane numpad;
     private VBox clockActionMenu;
+    private VBox overrideConfirmMenu = null;
+
+    private Stage primaryStageRef;
 
     private enum State {
         LOGIN_EID,
@@ -30,18 +33,19 @@ public class PosLogin extends Application {
         CLOCK_EID,
         CLOCK_PASSWORD,
         CLOCK_ACTION,
-        MESSAGE_DISPLAY
+        MESSAGE_DISPLAY,
+        HELD_OVERRIDE_CONFIRM
     }
-    
+
     private State currentState = State.LOGIN_EID;
     private String currentEid = "";
-
-    // Hardcoded credentials for now
-    private static final String VALID_EID = "3756772";
-    private static final String VALID_PIN = "3063";
+    private DatabaseManager.UserData pendingLoginUser = null;
+    private String heldOverrideName = "";
 
     @Override
     public void start(Stage primaryStage) {
+        this.primaryStageRef = primaryStage;
+
         BorderPane root = new BorderPane();
         root.getStyleClass().add("root-pane");
 
@@ -50,30 +54,42 @@ public class PosLogin extends Application {
         bottomBar.getStyleClass().add("bottom-bar");
         bottomBar.setAlignment(Pos.CENTER_LEFT);
         bottomBar.setPadding(new Insets(10, 20, 10, 20));
-        
+
         Label statusLabel = new Label("Online");
         statusLabel.getStyleClass().add("status-text");
-        
+
         Label locationLabel = new Label("Store #14302 - Superior, WI");
         locationLabel.getStyleClass().add("status-text");
-        
+
         Label tillLabel = new Label("Till Id: 1");
         tillLabel.getStyleClass().add("status-text");
-        
+
+        // Held drawer banner — shown in amber when a drawer is held
+        Label heldBanner = new Label();
+        heldBanner.getStyleClass().add("status-text");
+        heldBanner.setStyle("-fx-text-fill: #fbbf24; -fx-font-weight: bold;");
+        DatabaseManager.UserData held = DatabaseManager.getHeldDrawer();
+        if (held != null) {
+            heldBanner.setText("DRAWER HELD BY: " + held.name.toUpperCase());
+        } else {
+            heldBanner.setVisible(false);
+            heldBanner.setManaged(false);
+        }
+
         Region spacer = new Region();
         HBox.setHgrow(spacer, Priority.ALWAYS);
-        
-        bottomBar.getChildren().addAll(statusLabel, locationLabel, spacer, tillLabel);
+
+        bottomBar.getChildren().addAll(statusLabel, locationLabel, heldBanner, spacer, tillLabel);
         root.setBottom(bottomBar);
 
         // --- Center Content Stack ---
         centerContent = new VBox(25);
         centerContent.setAlignment(Pos.CENTER);
         centerContent.setMaxWidth(800);
-        
+
         Label banner = new Label("DOLLAR GENERAL POS");
         banner.getStyleClass().add("banner-text");
-        
+
         warningLabel = new Label("ENTER EMPLOYEE ID OR SCAN BADGE");
         warningLabel.getStyleClass().add("warning-text");
 
@@ -85,7 +101,7 @@ public class PosLogin extends Application {
         // Numpad Grid
         numpad = createNumpad();
         numpad.setAlignment(Pos.CENTER);
-        
+
         // Clock Action Menu
         clockActionMenu = createClockActionMenu();
         clockActionMenu.setAlignment(Pos.CENTER);
@@ -102,28 +118,30 @@ public class PosLogin extends Application {
 
         // Scene Setup
         Scene scene = new Scene(root, 1024, 768);
-        
+
         try {
             String cssPath = getClass().getResource("/style.css").toExternalForm();
             scene.getStylesheets().add(cssPath);
         } catch (NullPointerException e) {
             System.err.println("Warning: style.css not found in resources. Running without styling.");
         }
-        
+
         primaryStage.setTitle("dgpOS - Login");
         primaryStage.setScene(scene);
-        primaryStage.setFullScreen(true); 
-        primaryStage.setFullScreenExitHint(""); 
+        primaryStage.setFullScreen(true);
+        primaryStage.setFullScreenExitHint("");
         primaryStage.show();
 
         // KIOSK LOCKDOWN: Keep focus permanently on the input field
         Platform.runLater(() -> employeeIdField.requestFocus());
         employeeIdField.focusedProperty().addListener((obs, oldVal, newVal) -> {
-            if (!newVal && currentState != State.CLOCK_ACTION && currentState != State.MESSAGE_DISPLAY) {
+            if (!newVal && currentState != State.CLOCK_ACTION
+                    && currentState != State.MESSAGE_DISPLAY
+                    && currentState != State.HELD_OVERRIDE_CONFIRM) {
                 Platform.runLater(() -> employeeIdField.requestFocus());
             }
         });
-        
+
         updateUIForState();
     }
 
@@ -135,11 +153,10 @@ public class PosLogin extends Application {
 
         // Left Column: Clock In/Out
         clockInOutBtn = createActionButton("Clock\nIn / Out");
-        clockInOutBtn.setPrefHeight(325); // Spans all 4 rows
+        clockInOutBtn.setPrefHeight(325);
         grid.add(clockInOutBtn, 0, 0, 1, 4);
         clockInOutBtn.setOnAction(e -> {
             if (currentState == State.LOGIN_EID || currentState == State.LOGIN_PASSWORD) {
-                System.out.println("Initiating Clock In/Out flow...");
                 currentState = State.CLOCK_EID;
                 currentEid = "";
                 updateUIForState();
@@ -161,7 +178,7 @@ public class PosLogin extends Application {
                 Button btn = createNumpadButton(keyText);
                 btn.setOnAction(e -> {
                     employeeIdField.appendText(keyText);
-                    employeeIdField.requestFocus(); 
+                    employeeIdField.requestFocus();
                 });
                 grid.add(btn, col + 1, row);
             }
@@ -187,7 +204,7 @@ public class PosLogin extends Application {
 
         Button enterBtn = createActionButton("Enter");
         enterBtn.getStyleClass().add("enter-button");
-        enterBtn.setPrefHeight(155); // Spans 2 rows
+        enterBtn.setPrefHeight(155);
         enterBtn.setOnAction(e -> processInput(employeeIdField.getText()));
         grid.add(enterBtn, 4, 2, 1, 2);
 
@@ -196,13 +213,13 @@ public class PosLogin extends Application {
 
     private VBox createClockActionMenu() {
         VBox menu = new VBox(15);
-        
+
         Button clockInBtn = createMenuButton("Clock In");
         Button clockOutBtn = createMenuButton("Clock Out");
         Button breakInBtn = createMenuButton("Break In");
         Button breakOutBtn = createMenuButton("Break Out");
         Button closeBtn = createMenuButton("Close");
-        
+
         clockInBtn.setOnAction(e -> finishClockAction("Clocked In"));
         clockOutBtn.setOnAction(e -> finishClockAction("Clocked Out"));
         breakInBtn.setOnAction(e -> finishClockAction("Break In Recorded"));
@@ -211,8 +228,38 @@ public class PosLogin extends Application {
             currentState = State.LOGIN_EID;
             updateUIForState();
         });
-        
+
         menu.getChildren().addAll(clockInBtn, clockOutBtn, breakInBtn, breakOutBtn, closeBtn);
+        return menu;
+    }
+
+    private VBox createOverrideMenu() {
+        VBox menu = new VBox(15);
+        menu.setAlignment(Pos.CENTER);
+
+        Button yesBtn = createMenuButton("Yes - Override & Z-Out");
+        Button noBtn = createMenuButton("No - Go Back");
+
+        yesBtn.setOnAction(e -> {
+            DatabaseManager.UserData heldUser = DatabaseManager.getHeldDrawer();
+            if (heldUser != null) {
+                DatabaseManager.ZOutData zData = DatabaseManager.getZOutData(heldUser.eid);
+                PrinterService.printZOutReport(zData);
+                DatabaseManager.logAction(heldUser.eid, "ZOUT", "");
+                DatabaseManager.clearHeldDrawer();
+            }
+            proceedToTransactionScreen(pendingLoginUser);
+        });
+
+        noBtn.setOnAction(e -> {
+            pendingLoginUser = null;
+            heldOverrideName = "";
+            currentState = State.LOGIN_EID;
+            currentEid = "";
+            updateUIForState();
+        });
+
+        menu.getChildren().addAll(yesBtn, noBtn);
         return menu;
     }
 
@@ -241,21 +288,27 @@ public class PosLogin extends Application {
         employeeIdField.clear();
         currentState = State.LOGIN_EID;
         currentEid = "";
+        pendingLoginUser = null;
+        heldOverrideName = "";
         updateUIForState();
     }
 
     private void updateUIForState() {
         employeeIdField.clear();
-        
-        // Reset styles and visibility
-        clockInOutBtn.setStyle(""); // clear inline style to revert to CSS
+
+        // Reset: remove override menu if present, restore numpad
+        clockInOutBtn.setStyle("");
+        if (overrideConfirmMenu != null && centerContent.getChildren().contains(overrideConfirmMenu)) {
+            centerContent.getChildren().remove(overrideConfirmMenu);
+            overrideConfirmMenu = null;
+        }
         if (!centerContent.getChildren().contains(numpad)) {
             centerContent.getChildren().remove(clockActionMenu);
             centerContent.getChildren().add(numpad);
         }
         employeeIdField.setVisible(true);
         employeeIdField.setDisable(false);
-        
+
         switch (currentState) {
             case LOGIN_EID:
                 warningLabel.setText("ENTER EMPLOYEE ID OR SCAN BADGE");
@@ -277,25 +330,32 @@ public class PosLogin extends Application {
                 break;
             case CLOCK_ACTION:
                 warningLabel.setText("SELECT CLOCK ACTION");
-                employeeIdField.setVisible(false); // Hide text field for menu
+                employeeIdField.setVisible(false);
                 centerContent.getChildren().remove(numpad);
                 centerContent.getChildren().add(clockActionMenu);
                 break;
+            case HELD_OVERRIDE_CONFIRM:
+                warningLabel.setText("OVERRIDE TILL USER: " + heldOverrideName.toUpperCase() + "?");
+                employeeIdField.setVisible(false);
+                centerContent.getChildren().remove(numpad);
+                overrideConfirmMenu = createOverrideMenu();
+                centerContent.getChildren().add(overrideConfirmMenu);
+                break;
             case MESSAGE_DISPLAY:
-                employeeIdField.setDisable(true); // Ignore inputs while showing a message
+                employeeIdField.setDisable(true);
                 break;
         }
-        
-        if (currentState != State.CLOCK_ACTION && currentState != State.MESSAGE_DISPLAY) {
+
+        if (currentState != State.CLOCK_ACTION
+                && currentState != State.MESSAGE_DISPLAY
+                && currentState != State.HELD_OVERRIDE_CONFIRM) {
             Platform.runLater(() -> employeeIdField.requestFocus());
         }
     }
 
     private void processInput(String input) {
         if (input == null || input.trim().isEmpty()) return;
-        
-        System.out.println("Processing input: " + input + " in state " + currentState);
-        
+
         switch (currentState) {
             case LOGIN_EID:
                 currentEid = input;
@@ -305,18 +365,21 @@ public class PosLogin extends Application {
             case LOGIN_PASSWORD:
                 DatabaseManager.UserData user = DatabaseManager.authenticateUser(currentEid, input);
                 if (user != null) {
-                    System.out.println("Login successful for " + currentEid + " (" + user.name + ")");
-                    currentState = State.MESSAGE_DISPLAY;
-                    updateUIForState();
-                    warningLabel.setText("LOGIN SUCCESSFUL!");
-                    
-                    PauseTransition pause = new PauseTransition(Duration.seconds(1.0));
-                    pause.setOnFinished(e -> {
-                        MainTransactionScreen.show((Stage) employeeIdField.getScene().getWindow(), currentEid);
-                    });
-                    pause.play();
+                    DatabaseManager.UserData heldDrawer = DatabaseManager.getHeldDrawer();
+                    if (heldDrawer != null) {
+                        if ("SA".equals(user.role)) {
+                            displayTemporaryMessage("OVERRIDE NOT PERMITTED", State.LOGIN_EID);
+                        } else {
+                            // Key-holder — offer override
+                            pendingLoginUser = user;
+                            heldOverrideName = heldDrawer.name;
+                            currentState = State.HELD_OVERRIDE_CONFIRM;
+                            updateUIForState();
+                        }
+                    } else {
+                        proceedToTransactionScreen(user);
+                    }
                 } else {
-                    System.out.println("Login failed!");
                     displayTemporaryMessage("INVALID CREDENTIALS!", State.LOGIN_EID);
                 }
                 break;
@@ -335,21 +398,30 @@ public class PosLogin extends Application {
                 }
                 break;
             case CLOCK_ACTION:
+            case HELD_OVERRIDE_CONFIRM:
             case MESSAGE_DISPLAY:
-                // Ignore numpad enters in these states
                 break;
         }
     }
-    
+
+    private void proceedToTransactionScreen(DatabaseManager.UserData user) {
+        currentState = State.MESSAGE_DISPLAY;
+        updateUIForState();
+        warningLabel.setText("LOGIN SUCCESSFUL!");
+
+        PauseTransition pause = new PauseTransition(Duration.seconds(1.0));
+        pause.setOnFinished(e -> MainTransactionScreen.show(primaryStageRef, user.eid));
+        pause.play();
+    }
+
     private void displayTemporaryMessage(String message, State nextState) {
         currentState = State.MESSAGE_DISPLAY;
         updateUIForState();
         warningLabel.setText(message);
-        
+
         PauseTransition pause = new PauseTransition(Duration.seconds(1.5));
         pause.setOnFinished(e -> {
             currentState = nextState;
-            // Clear EID if we're falling back to the start of a flow
             if (nextState == State.LOGIN_EID || nextState == State.CLOCK_EID) {
                 currentEid = "";
             }
@@ -357,9 +429,8 @@ public class PosLogin extends Application {
         });
         pause.play();
     }
-    
+
     private void finishClockAction(String action) {
-        System.out.println("Clock action completed: " + action + " for EID: " + currentEid);
         String dbAction = switch (action) {
             case "Clocked In"          -> "CLOCK_IN";
             case "Clocked Out"         -> "CLOCK_OUT";

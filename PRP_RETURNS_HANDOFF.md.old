@@ -1,0 +1,155 @@
+# PRP Returns — Handoff for Next Session
+
+This file is for a future Claude Code session. It has no memory of our prior work — treat this document as the source of truth for what "PRP Returns" should be and how it fits in.
+
+## What PRP Returns is
+
+PRP = **Product Return Process**. In DG (Dollar General) operations, PRP is the workflow for sending defective / recalled / manufacturer-return-eligible product back to vendors or to a return center. Items tagged for PRP are pulled from the sales floor, logged, bundled, and shipped out on scheduled pickups.
+
+At minimum, PRP Returns must let a store employee on the HHT:
+1. Scan an item to add it to an open PRP batch.
+2. Pick a return reason (DEFECTIVE, RECALL, VENDOR_RETURN, MFG_DEFECT, CUSTOMER_RETURN, etc.).
+3. Enter a quantity.
+4. See the running list of items on the current batch.
+5. Close the batch (locks it, optionally prints a manifest).
+
+The backoffice needs to:
+1. See all open + closed PRP batches for each store.
+2. Print a PRP manifest PDF with all items (laser printer already wired — use `sendToLaserPrinter`).
+3. Mark a closed batch as "shipped" once the vendor picks it up.
+
+## StoreNET context the new session will need
+
+StoreNET is a DG-style store ops testbed. There are already extensive memory files at `~/.claude/projects/C--Users-colet-Documents-GitHub-StoreNET/memory/` — **read those first**. Key ones:
+- `project_storenet_overview.md` — components + hardware
+- `project_pog_reset_design.md` — planogram reset flow (good example of HHT↔server coordination)
+- `feedback_session_continuity.md` — user expectations
+
+### Architecture quick reference
+- **Server**: `backoffice_web/server.js` (Express, ~3400 lines). Enterprise DB pool + per-store DB pools via `getStorePool(storeId)`. Middleware `storeContext` auto-attaches `req.pool` for `/api/*` routes except ones listed on line 23.
+- **Dashboard**: `backoffice_web/dashboard.html` — single-page app with module switching. Store Tasks tab is the last one. Planogram Maintenance has its own tab bar (Maintenance, Cycle Count Schedule, Reset History).
+- **Per-store DBs**: `inventory`, `receipts`, `receipt_items`, `tasks`, `task_pog_items`, `inventory_adjustments`, `inventory_transfers`, `compliance_logs`, `truck_manifests`, `manifest_items`, etc.
+- **Enterprise DB**: `planograms`, `planogram_items`, `master_inventory`, `stores`, `pricing_events`, `event_items`.
+- **HHT**: `handheld_app/` — Kotlin Compose. Main screen: `ScanScreen.kt`. Retrofit interface: `network/StoreNetApiService.kt`. Scans flow into a `MainActivity.scanEvents` SharedFlow; ScanScreen's `LaunchedEffect` handles them per-screen.
+- **Login context**: `MainActivity.loggedInEid` is available anywhere for "who did this" attribution.
+
+### Printer
+- **Laser / DeskJet 4155**: `sendToLaserPrinter(pdfBuffer)` pipes a PDF buffer into `lp -d HP4155` via `spawn`. Use this for any PDF output including PRP manifests.
+- **Receipt printer**: `sendToPrinter(data)` raw TCP to 192.168.0.179:9100. Use for short receipt-style output if needed.
+
+## Recommended implementation plan
+
+### Schema (per-store)
+
+```sql
+CREATE TABLE IF NOT EXISTS prp_batches (
+    id INT AUTO_INCREMENT PRIMARY KEY,
+    status ENUM('OPEN','CLOSED','SHIPPED','CANCELLED') DEFAULT 'OPEN',
+    vendor VARCHAR(100),
+    carrier VARCHAR(50),
+    tracking_number VARCHAR(100),
+    opened_by_eid VARCHAR(50),
+    closed_by_eid VARCHAR(50),
+    shipped_at DATETIME NULL,
+    notes VARCHAR(500),
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    closed_at TIMESTAMP NULL
+);
+
+CREATE TABLE IF NOT EXISTS prp_batch_items (
+    id INT AUTO_INCREMENT PRIMARY KEY,
+    batch_id INT NOT NULL,
+    sku VARCHAR(50) NOT NULL,
+    quantity INT NOT NULL,
+    reason_code VARCHAR(30) NOT NULL,
+    notes VARCHAR(255),
+    scanned_by_eid VARCHAR(50),
+    scanned_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (batch_id) REFERENCES prp_batches(id) ON DELETE CASCADE,
+    INDEX idx_prp_batch (batch_id)
+);
+```
+
+Add these to the `storeContext` middleware init block in `server.js` (search for the `inventory_adjustments` create — add near it). Follow the existing pattern.
+
+### Endpoints (all per-store, use `req.pool`)
+
+```
+GET    /api/prp/batches              → list all batches for current store (with item counts)
+GET    /api/prp/batches/:id          → batch + all its items
+POST   /api/prp/batches              → create OPEN batch  (body: { vendor?, notes? })
+POST   /api/prp/batches/:id/item     → add item (body: { sku, quantity, reason_code, notes? }). Also decrement inventory.quantity.
+DELETE /api/prp/batches/:id/item/:itemId  → remove an item (also credit quantity back).
+POST   /api/prp/batches/:id/close    → flip status to CLOSED, timestamp, optional auto-print manifest.
+POST   /api/prp/batches/:id/ship     → flip status to SHIPPED, record carrier/tracking, shipped_at.
+POST   /api/prp/batches/:id/print    → print manifest PDF via sendToLaserPrinter.
+```
+
+**Important:** adding an item to a batch should decrement the store's `inventory.quantity` the same way the adjustment flow does. Removing an item should re-credit it. Closing or shipping does NOT touch inventory further. Reusing the adjustment pattern is fine but keep it in its own PRP endpoint — don't try to share code at first.
+
+### PDF manifest builder
+
+Pattern for `buildPrpManifestPDF(batch, items, storeId)` — mirror `buildReceivingPDF` in server.js:
+- Letter size, 50pt margins
+- Header: "PRP RETURN MANIFEST" + Store # + batch id + date
+- Vendor / carrier / tracking fields
+- Item table: SKU, Name, Qty, Reason, Notes
+- Signature lines at bottom (Store Manager + Driver)
+- Add a Code128 barcode of the batch id via JsBarcode (see buildReceivingPDF for the pattern)
+
+### HHT screen
+
+Replace the `selectedScreen == "PRP Returns"` branch (currently falls through to "Coming Soon"). Suggested UX:
+
+- **Opening screen**: if an OPEN batch exists for this store, show it. If not, "Start New Batch" button.
+- **Inside a batch**:
+  - Top: batch id + item count + Close button.
+  - Scanner-fed input for UPC/SKU. After scan, show a modal / expandable form: reason code (chip picker), quantity (default 1), notes.
+  - List of already-scanned items with "Remove" action.
+- **On Close**: confirm dialog → POST close → optionally jump to print prompt.
+
+Reason codes: `DEFECTIVE`, `RECALL`, `EXPIRED`, `MFG_DEFECT`, `VENDOR_RETURN`, `CUSTOMER_RETURN`.
+
+Add to `StoreNetApiService.kt`:
+```kotlin
+@GET("api/prp/batches")                  fun getPrpBatches(...)
+@POST("api/prp/batches")                 fun createPrpBatch(...)
+@POST("api/prp/batches/{id}/item")       fun addPrpItem(...)
+@DELETE("api/prp/batches/{id}/item/{itemId}") fun removePrpItem(...)
+@POST("api/prp/batches/{id}/close")      fun closePrpBatch(...)
+@POST("api/prp/batches/{id}/ship")       fun shipPrpBatch(...)
+@POST("api/prp/batches/{id}/print")      fun printPrpManifest(...)
+```
+
+DTOs: `PrpBatch`, `PrpItem`, `AddPrpItemRequest`, `ShipBatchRequest`.
+
+### Backoffice view (optional but recommended)
+
+A "PRP Returns" section, either a new left-nav module or a tab under Store Tasks. Shows:
+- Open batches (with link to print)
+- Closed / not-yet-shipped batches (with Mark Shipped form)
+- Recent shipped history
+
+Use `apiFetch` and the dashboard.html patterns — mirror how Store Tasks or Reset History are built.
+
+## What NOT to do
+
+- Do not block PRP from being created when inventory is 0 — let the user add items anyway; they may be decrementing a miscount.
+- Do not make items on a CLOSED batch editable. Must re-open or create a new batch.
+- Do not hardcode vendor names; keep it a free-text field for now.
+- Do not re-use the `inventory_adjustments` table. PRP is its own concept with its own lifecycle (batches, closure, shipping). Shared schema gets tangled fast.
+
+## Testing checklist
+
+1. `/api/prp/batches` POST returns id; row visible in MySQL.
+2. Adding an item decrements `inventory.quantity`; removing credits it back.
+3. Closing an OPEN batch sets `status=CLOSED` and `closed_at`.
+4. Print endpoint successfully fires `sendToLaserPrinter` (watch CUPS logs / DeskJet).
+5. HHT creates a batch, scans 3 items, closes, and a manifest prints.
+6. Backoffice lists the closed batch and "Mark Shipped" works end-to-end.
+
+## Estimated scope
+
+Roughly ~500 lines of server code (schema + 7 endpoints + PDF builder), ~300 lines of HHT Compose (main PRP screen + dialog + DTOs), ~150 lines of dashboard.html (optional view). About one full focused session if nothing explodes.
+
+Good luck.

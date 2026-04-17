@@ -243,36 +243,17 @@ public class MainTransactionScreen {
         actionGrid.add(qtyBtn, 0, 3);
         actionGrid.add(managerMenuBtn, 0, 4);
 
-        // Top Row Actions (Above numpad)
-        Button returnBtn = createButton("Return", "info-btn");
-        returnBtn.setOnAction(e -> {
-            requireKeyHolder(primaryStage, eid, () -> {
-                isReturnMode = true;
-            });
-            scannerInput.requestFocus();
-        });
-        
-        Button discountBtn = createButton("Discount", "info-btn");
-        discountBtn.setOnAction(e -> {
-            requireKeyHolder(primaryStage, eid, () -> {
-                ScannedItem selected = table.getSelectionModel().getSelectedItem();
-                if (selected != null) {
-                    // Apply a simple 10% discount for now
-                    double newPrice = selected.getBasePrice() * 0.90;
-                    double origPrice = selected.getOriginalPrice();
-                    int qty = selected.getQuantity();
-                    int index = table.getItems().indexOf(selected);
-                    table.getItems().set(index, new ScannedItem(selected.getUpc(), selected.getSku(), selected.getName() + " (-10%)", newPrice, origPrice, selected.getSaleId(), selected.isTaxable(), qty));
-                    DatabaseManager.logAction(eid, "DISCOUNT", selected.getUpc());
-                    updateTotals(table, totalsBlock);
-                    table.getSelectionModel().clearSelection();
-                }
-            });
-            scannerInput.requestFocus();
-        });
+        // Scanner state — declared early so secure overlay lambda can capture them
+        StringBuilder scannerBuffer = new StringBuilder();
+        boolean[] scannerBlocked = {false}; // true while secure overlay is active
 
-        actionGrid.add(returnBtn, 1, 0);
-        actionGrid.add(discountBtn, 2, 0);
+        // Top Row: Secure button (spans 2 cols where Return + Discount used to be)
+        Button secureBtn = createButton("Secure", "void-btn");
+        secureBtn.setOnAction(e -> {
+            showSecureOverlay(primaryStage, eid, DatabaseManager.getUserName(eid), scannerBlocked, scannerBuffer,
+                    root, receiptTape, rightSection, scannerInput);
+        });
+        actionGrid.add(secureBtn, 1, 0, 2, 1);
 
         // Action Buttons (Column 4 - right of numpad)
         Button clearBtn = createButton("Clear", "danger-btn");
@@ -319,11 +300,7 @@ public class MainTransactionScreen {
         
         // Log out button at the top right
         Button logoutBtn = createButton("Log Out", "danger-btn");
-        logoutBtn.setOnAction(e -> {
-            DatabaseManager.logAction(eid, "LOGOUT", "");
-            PosLogin loginScreen = new PosLogin();
-            loginScreen.start(primaryStage);
-        });
+        logoutBtn.setOnAction(e -> showLogoutDialog(primaryStage, eid));
         actionGrid.add(logoutBtn, 5, 0);
 
         rightSection.getChildren().addAll(scannerInput, actionGrid);
@@ -338,9 +315,8 @@ public class MainTransactionScreen {
         }
         
         // --- Bulletproof Scanner Listener (Scene Level) ---
-        StringBuilder scannerBuffer = new StringBuilder();
         scene.addEventFilter(KeyEvent.KEY_TYPED, event -> {
-            // Only capture if the input field is NOT focused
+            if (scannerBlocked[0]) return; // never process keystrokes during secure screen
             if (!scannerInput.isFocused()) {
                 String charTyped = event.getCharacter();
                 if (charTyped.equals("\r") || charTyped.equals("\n")) {
@@ -636,6 +612,242 @@ public class MainTransactionScreen {
         stage.showAndWait();
     }
 
+    private static void showSecureOverlay(Stage owner, String eid, String name,
+            boolean[] scannerBlocked, StringBuilder scannerBuffer,
+            BorderPane root, VBox receiptTape, VBox rightSection, TextField scannerInput) {
+
+        // Block scanner event filter and flush any buffered junk
+        scannerBlocked[0] = true;
+        scannerBuffer.setLength(0);
+
+        VBox securePane = new VBox(15);
+        securePane.setAlignment(Pos.CENTER);
+        securePane.setMaxWidth(Double.MAX_VALUE);
+        securePane.setStyle("-fx-background-color: #0f172a;");
+
+        Label lockLabel = new Label("TILL SECURED");
+        lockLabel.setStyle("-fx-text-fill: white; -fx-font-size: 36px; -fx-font-weight: bold;");
+
+        Label cashierLabel = new Label(name.toUpperCase());
+        cashierLabel.setStyle("-fx-text-fill: #94a3b8; -fx-font-size: 20px;");
+
+        // Fields
+        javafx.scene.control.TextField overrideEidField = new javafx.scene.control.TextField();
+        overrideEidField.setPromptText("Key-Holder EID");
+        overrideEidField.getStyleClass().add("employee-input");
+        overrideEidField.setMaxWidth(250);
+        overrideEidField.setVisible(false);
+        overrideEidField.setManaged(false);
+
+        javafx.scene.control.PasswordField pinField = new javafx.scene.control.PasswordField();
+        pinField.setPromptText("Enter PIN to unlock");
+        pinField.getStyleClass().add("employee-input");
+        pinField.setMaxWidth(250);
+
+        Label statusLabel = new Label("Enter your PIN or use Key-Holder Override");
+        statusLabel.setStyle("-fx-text-fill: #64748b; -fx-font-size: 14px;");
+
+        boolean[] overrideMode = {false};
+
+        Runnable doUnlock = () -> {
+            scannerBlocked[0] = false;
+            scannerBuffer.setLength(0);
+            root.setLeft(receiptTape);
+            root.setCenter(rightSection);
+            Platform.runLater(() -> scannerInput.requestFocus());
+        };
+
+        Button unlockBtn = new Button("Unlock");
+        unlockBtn.setStyle("-fx-background-color: #10b981; -fx-text-fill: white; -fx-font-size: 16px; -fx-font-weight: bold; -fx-cursor: hand;");
+        unlockBtn.setPrefSize(200, 50);
+        unlockBtn.setOnAction(e -> {
+            if (!overrideMode[0]) {
+                DatabaseManager.UserData user = DatabaseManager.authenticateUser(eid, pinField.getText().trim());
+                if (user != null) {
+                    doUnlock.run();
+                } else {
+                    statusLabel.setText("Incorrect PIN.");
+                    statusLabel.setStyle("-fx-text-fill: #ef4444; -fx-font-size: 14px;");
+                    pinField.clear();
+                }
+            } else {
+                String overrideEid = overrideEidField.getText().trim();
+                DatabaseManager.UserData kh = DatabaseManager.authenticateUser(overrideEid, pinField.getText().trim());
+                if (kh != null && !kh.role.equals("SA")) {
+                    DatabaseManager.logAction(eid, "SECURE_OVERRIDE", overrideEid);
+                    doUnlock.run();
+                } else if (kh != null) {
+                    statusLabel.setText("Not a key carrier.");
+                    statusLabel.setStyle("-fx-text-fill: #ef4444; -fx-font-size: 14px;");
+                    pinField.clear();
+                } else {
+                    statusLabel.setText("Invalid credentials.");
+                    statusLabel.setStyle("-fx-text-fill: #ef4444; -fx-font-size: 14px;");
+                    pinField.clear();
+                }
+            }
+        });
+
+        Button overrideBtn = new Button("Key-Holder Override");
+        overrideBtn.setStyle("-fx-background-color: transparent; -fx-text-fill: #64748b; -fx-font-size: 12px; -fx-cursor: hand; -fx-border-color: #334155; -fx-border-width: 1;");
+        overrideBtn.setPrefSize(200, 35);
+        overrideBtn.setOnAction(e -> {
+            overrideMode[0] = !overrideMode[0];
+            overrideEidField.setVisible(overrideMode[0]);
+            overrideEidField.setManaged(overrideMode[0]);
+            pinField.clear();
+            overrideEidField.clear();
+            if (overrideMode[0]) {
+                pinField.setPromptText("Key-Holder PIN");
+                statusLabel.setText("Enter Key-Holder EID, then PIN");
+                statusLabel.setStyle("-fx-text-fill: #64748b; -fx-font-size: 14px;");
+                overrideBtn.setText("Cancel Override");
+                Platform.runLater(() -> overrideEidField.requestFocus());
+            } else {
+                pinField.setPromptText("Enter PIN to unlock");
+                statusLabel.setText("Enter your PIN or use Key-Holder Override");
+                statusLabel.setStyle("-fx-text-fill: #64748b; -fx-font-size: 14px;");
+                overrideBtn.setText("Key-Holder Override");
+                Platform.runLater(() -> pinField.requestFocus());
+            }
+        });
+
+        GridPane pinNumpad = buildNumpad(pinField);
+
+        pinField.setOnKeyPressed(ev -> { if (ev.getCode() == javafx.scene.input.KeyCode.ENTER) unlockBtn.fire(); });
+
+        securePane.getChildren().addAll(lockLabel, cashierLabel, overrideEidField, pinField, pinNumpad, statusLabel, unlockBtn, overrideBtn);
+        root.setLeft(null);
+        root.setCenter(securePane);
+        Platform.runLater(() -> pinField.requestFocus());
+    }
+
+    private static void showLogoutDialog(Stage owner, String eid) {
+        Stage stage = new Stage();
+        stage.initOwner(owner);
+        stage.initModality(Modality.WINDOW_MODAL);
+        stage.initStyle(StageStyle.UNDECORATED);
+
+        VBox root = new VBox(20);
+        root.setAlignment(Pos.CENTER);
+        root.setPadding(new Insets(30));
+        root.setStyle("-fx-background-color: #1e293b; -fx-border-color: #ef4444; -fx-border-width: 4; -fx-background-radius: 10; -fx-border-radius: 10;");
+
+        Label title = new Label("Remove Cash Drawer?");
+        title.setStyle("-fx-text-fill: white; -fx-font-size: 22px; -fx-font-weight: bold;");
+
+        Label subtitle = new Label("Selecting 'Yes' will Z-out your register and print an EOD report.");
+        subtitle.setStyle("-fx-text-fill: #94a3b8; -fx-font-size: 14px;");
+        subtitle.setWrapText(true);
+        subtitle.setMaxWidth(320);
+        subtitle.setTextAlignment(javafx.scene.text.TextAlignment.CENTER);
+
+        HBox buttons = new HBox(15);
+        buttons.setAlignment(Pos.CENTER);
+
+        Button yesBtn = new Button("Yes");
+        yesBtn.setStyle("-fx-background-color: #ef4444; -fx-text-fill: white; -fx-font-size: 16px; -fx-font-weight: bold; -fx-cursor: hand;");
+        yesBtn.setPrefSize(100, 50);
+        yesBtn.setOnAction(e -> {
+            stage.close();
+            DatabaseManager.ZOutData data = DatabaseManager.getZOutData(eid);
+            PrinterService.printZOutReport(data);
+            DatabaseManager.logAction(eid, "ZOUT", "");
+            DatabaseManager.clearHeldDrawer();
+            DatabaseManager.logAction(eid, "LOGOUT", "");
+            PosLogin loginScreen = new PosLogin();
+            loginScreen.start(owner);
+        });
+
+        Button noBtn = new Button("No");
+        noBtn.setStyle("-fx-background-color: #475569; -fx-text-fill: white; -fx-font-size: 16px; -fx-font-weight: bold; -fx-cursor: hand;");
+        noBtn.setPrefSize(100, 50);
+        noBtn.setOnAction(e -> {
+            stage.close();
+            DatabaseManager.setHeldDrawer(eid, DatabaseManager.getUserName(eid));
+            DatabaseManager.logAction(eid, "LOGOUT", "");
+            PosLogin loginScreen = new PosLogin();
+            loginScreen.start(owner);
+        });
+
+        Button cancelBtn = new Button("Cancel");
+        cancelBtn.setStyle("-fx-background-color: #1e293b; -fx-text-fill: #94a3b8; -fx-font-size: 14px; -fx-cursor: hand; -fx-border-color: #334155; -fx-border-width: 1;");
+        cancelBtn.setPrefSize(90, 40);
+        cancelBtn.setOnAction(e -> stage.close());
+
+        buttons.getChildren().addAll(yesBtn, noBtn, cancelBtn);
+        root.getChildren().addAll(title, subtitle, buttons);
+
+        Scene scene = new Scene(root);
+        scene.setFill(Color.TRANSPARENT);
+        stage.setScene(scene);
+        stage.showAndWait();
+    }
+
+    // Generic touchscreen-friendly amount entry dialog.
+    // borderColor sets the accent color; onConfirm receives the validated amount.
+    private static void showAmountDialog(Stage owner, String eid, String titleText,
+                                         String subtitleText, String borderColor,
+                                         java.util.function.Consumer<Double> onConfirm) {
+        Stage stage = new Stage();
+        stage.initOwner(owner);
+        stage.initModality(Modality.WINDOW_MODAL);
+        stage.initStyle(StageStyle.UNDECORATED);
+
+        VBox root = new VBox(15);
+        root.setAlignment(Pos.CENTER);
+        root.setPadding(new Insets(30));
+        root.setStyle("-fx-background-color: #1e293b; -fx-border-color: " + borderColor +
+                "; -fx-border-width: 4; -fx-background-radius: 10; -fx-border-radius: 10;");
+
+        Label title = new Label(titleText);
+        title.setStyle("-fx-text-fill: white; -fx-font-size: 22px; -fx-font-weight: bold;");
+
+        Label subtitle = new Label(subtitleText);
+        subtitle.setStyle("-fx-text-fill: #94a3b8; -fx-font-size: 14px;");
+
+        TextField amountField = new TextField();
+        amountField.setPromptText("0.00");
+        amountField.setStyle("-fx-font-size: 32px; -fx-alignment: center; -fx-background-color: #0f172a; " +
+                "-fx-text-fill: white; -fx-border-color: " + borderColor + "; -fx-border-width: 2; " +
+                "-fx-background-radius: 6; -fx-border-radius: 6;");
+        amountField.setMaxWidth(270);
+
+        GridPane numpad = buildNumpad(amountField);
+
+        Label statusLabel = new Label("");
+        statusLabel.setStyle("-fx-text-fill: #ef4444; -fx-font-size: 13px;");
+
+        Button confirmBtn = new Button("Confirm");
+        confirmBtn.setStyle("-fx-background-color: " + borderColor +
+                "; -fx-text-fill: white; -fx-font-size: 18px; -fx-font-weight: bold; -fx-cursor: hand; -fx-background-radius: 6;");
+        confirmBtn.setPrefSize(270, 55);
+        confirmBtn.setOnAction(ev -> {
+            try {
+                double amount = Double.parseDouble(amountField.getText().trim());
+                if (amount <= 0) { statusLabel.setText("Amount must be greater than zero."); return; }
+                stage.close();
+                onConfirm.accept(amount);
+            } catch (NumberFormatException nfe) {
+                statusLabel.setText("Invalid amount.");
+            }
+        });
+
+        Button cancelBtn = new Button("Cancel");
+        cancelBtn.setStyle("-fx-background-color: #475569; -fx-text-fill: white; -fx-font-size: 14px; -fx-cursor: hand; -fx-background-radius: 6;");
+        cancelBtn.setPrefSize(270, 45);
+        cancelBtn.setOnAction(ev -> stage.close());
+
+        amountField.setOnKeyPressed(ev -> { if (ev.getCode() == javafx.scene.input.KeyCode.ENTER) confirmBtn.fire(); });
+
+        root.getChildren().addAll(title, subtitle, amountField, numpad, statusLabel, confirmBtn, cancelBtn);
+
+        Scene scene = new Scene(root);
+        scene.setFill(Color.TRANSPARENT);
+        stage.setScene(scene);
+        stage.showAndWait();
+    }
+
     private static void showManagerMenu(Stage owner, String eid, TextField scannerInput) {
         Stage stage = new Stage();
         stage.initOwner(owner);
@@ -660,9 +872,29 @@ public class MainTransactionScreen {
         moneyTitle.setStyle("-fx-text-fill: #10b981; -fx-font-size: 20px; -fx-font-weight: bold;");
         
         Button startingBankBtn = createMenuButton("Starting Bank");
-        startingBankBtn.setOnAction(e -> { logManagerAction(owner, eid, "STARTING_BANK", stage); });
+        startingBankBtn.setOnAction(e -> {
+            stage.close();
+            showAmountDialog(owner, eid, "SET STARTING BANK",
+                "Enter the starting bank amount for this till.",
+                "#eab308", amount -> {
+                    DatabaseManager.setStartingBank(amount);
+                    DatabaseManager.logAction(eid, "STARTING_BANK", String.format("$%.2f", amount));
+                    showNotification(owner, "Starting Bank Set", "Success",
+                        String.format("Starting bank set to $%.2f", amount));
+                });
+        });
         Button pickupBtn = createMenuButton("Pickup");
-        pickupBtn.setOnAction(e -> { logManagerAction(owner, eid, "PICKUP", stage); });
+        pickupBtn.setOnAction(e -> {
+            stage.close();
+            showAmountDialog(owner, eid, "RECORD PICKUP",
+                "Enter the cash amount being removed from the drawer.",
+                "#10b981", amount -> {
+                    DatabaseManager.recordPickup(eid, amount, eid);
+                    DatabaseManager.logAction(eid, "PICKUP", String.format("$%.2f", amount));
+                    showNotification(owner, "Pickup Recorded", "Success",
+                        String.format("$%.2f removed from drawer.", amount));
+                });
+        });
         Button cashOutBtn = createMenuButton("Cash Out");
         cashOutBtn.setOnAction(e -> { logManagerAction(owner, eid, "CASH_OUT", stage); });
         Button cashInBtn = createMenuButton("Cash In");
@@ -715,6 +947,35 @@ public class MainTransactionScreen {
         scene.setFill(Color.TRANSPARENT);
         stage.setScene(scene);
         stage.showAndWait();
+    }
+
+    // Shared on-screen numpad for touchscreen use.
+    // Appends digits/decimal to target field; backspace removes last char.
+    private static GridPane buildNumpad(TextField target) {
+        GridPane pad = new GridPane();
+        pad.setHgap(8);
+        pad.setVgap(8);
+        pad.setAlignment(Pos.CENTER);
+
+        String[] labels = { "7","8","9", "4","5","6", "1","2","3", ".","0","⌫" };
+        for (int i = 0; i < labels.length; i++) {
+            String lbl = labels[i];
+            Button btn = new Button(lbl);
+            btn.setPrefSize(75, 60);
+            btn.setStyle("-fx-background-color: #334155; -fx-text-fill: white; -fx-font-size: 22px; -fx-font-weight: bold; -fx-background-radius: 6; -fx-cursor: hand;");
+            btn.setOnAction(e -> {
+                if (lbl.equals("⌫")) {
+                    String t = target.getText();
+                    if (!t.isEmpty()) target.setText(t.substring(0, t.length() - 1));
+                } else if (lbl.equals(".")) {
+                    if (!target.getText().contains(".")) target.appendText(".");
+                } else {
+                    target.appendText(lbl);
+                }
+            });
+            pad.add(btn, i % 3, i / 3);
+        }
+        return pad;
     }
 
     private static Button createMenuButton(String text) {

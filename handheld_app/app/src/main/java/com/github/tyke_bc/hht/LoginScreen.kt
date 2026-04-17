@@ -183,6 +183,7 @@ fun LoginScreen(onLoginSuccess: (String) -> Unit) {
                                         if (res.success && res.user != null) {
                                             MainActivity.loggedInUser = res.user.name
                                             MainActivity.loggedInRole = res.user.role
+                                            MainActivity.loggedInEid = username.trim()
                                             onLoginSuccess(storeNumber)
                                         } else {
                                             errorMessage = res.message ?: "Invalid EID or PIN."

@@ -1,0 +1,708 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>DG Respond — SM Desk</title>
+<style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; background: #f1f5f9; color: #0f172a; }
+    .topbar { background: #1e293b; color: white; padding: 12px 20px; display: flex; justify-content: space-between; align-items: center; box-shadow: 0 2px 6px rgba(0,0,0,.2); }
+    .topbar h1 { font-size: 18px; font-weight: 700; letter-spacing: 0.5px; }
+    .topbar .sub { font-size: 11px; color: #94a3b8; }
+    .topbar .store-pill { background: #334155; padding: 6px 12px; border-radius: 20px; font-size: 12px; font-weight: 600; cursor: pointer; }
+    .topbar button { background: #475569; color: white; border: none; padding: 8px 14px; border-radius: 6px; font-size: 13px; cursor: pointer; }
+    .topbar button:hover { background: #64748b; }
+
+    .tabs { background: white; border-bottom: 1px solid #e2e8f0; display: flex; gap: 0; padding: 0 20px; }
+    .tab { padding: 14px 20px; cursor: pointer; font-size: 14px; font-weight: 600; color: #64748b; border-bottom: 3px solid transparent; margin-bottom: -1px; }
+    .tab.active { color: #5D4037; border-color: #5D4037; background: #faf7f5; }
+    .tab:hover:not(.active) { color: #0f172a; background: #f8fafc; }
+
+    .container { padding: 20px; max-width: 1400px; margin: 0 auto; }
+    .section-title { font-size: 18px; font-weight: 700; margin-bottom: 12px; display: flex; justify-content: space-between; align-items: center; }
+    .filter-bar { display: flex; gap: 8px; margin-bottom: 14px; flex-wrap: wrap; align-items: center; }
+    .filter-bar .filter-btn { background: #e2e8f0; color: #1e293b; border: none; padding: 7px 14px; border-radius: 6px; font-size: 12px; font-weight: 600; cursor: pointer; }
+    .filter-bar .filter-btn.active { background: #5D4037; color: white; }
+    .filter-bar input { padding: 7px 12px; border: 1px solid #cbd5e1; border-radius: 6px; font-size: 13px; min-width: 220px; }
+
+    table { width: 100%; border-collapse: collapse; background: white; border-radius: 8px; overflow: hidden; box-shadow: 0 1px 3px rgba(0,0,0,.05); }
+    th, td { text-align: left; padding: 10px 12px; border-bottom: 1px solid #e2e8f0; font-size: 13px; }
+    th { background: #f8fafc; font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.5px; color: #64748b; }
+    tr:last-child td { border-bottom: none; }
+    tr:hover td { background: #f8fafc; }
+
+    .status { display: inline-block; padding: 3px 9px; border-radius: 12px; font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.5px; }
+    .status.open { background: #dbeafe; color: #1e40af; }
+    .status.closed { background: #fef3c7; color: #92400e; }
+    .status.submitted { background: #d1fae5; color: #065f46; }
+    .status.fulfilled { background: #e0e7ff; color: #3730a3; }
+    .status.cancelled { background: #e2e8f0; color: #475569; }
+
+    .action-link { color: #5D4037; font-weight: 600; cursor: pointer; margin-right: 12px; font-size: 12px; }
+    .action-link:hover { text-decoration: underline; }
+    .action-link.danger { color: #dc2626; }
+
+    .modal-backdrop { position: fixed; inset: 0; background: rgba(0,0,0,0.5); display: none; align-items: center; justify-content: center; z-index: 100; padding: 20px; }
+    .modal-backdrop.open { display: flex; }
+    .modal { background: white; border-radius: 10px; padding: 22px; max-width: 720px; width: 100%; max-height: 90vh; overflow-y: auto; }
+    .modal h3 { font-size: 18px; margin-bottom: 12px; }
+    .modal-actions { display: flex; gap: 10px; justify-content: flex-end; margin-top: 18px; flex-wrap: wrap; }
+
+    .grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+    .field { margin-bottom: 10px; }
+    .field label { display: block; font-size: 11px; font-weight: 600; color: #64748b; margin-bottom: 4px; text-transform: uppercase; letter-spacing: 0.5px; }
+    .field input, .field select, .field textarea { width: 100%; padding: 9px; border: 1px solid #cbd5e1; border-radius: 6px; font-size: 13px; font-family: inherit; }
+    .field textarea { resize: vertical; min-height: 50px; }
+
+    button.primary { background: #5D4037; color: white; border: none; padding: 9px 18px; border-radius: 6px; font-size: 13px; font-weight: 700; cursor: pointer; }
+    button.primary:hover:not(:disabled) { background: #3E2723; }
+    button.secondary { background: #e2e8f0; color: #1e293b; border: none; padding: 9px 18px; border-radius: 6px; font-size: 13px; font-weight: 600; cursor: pointer; }
+    button.secondary:hover { background: #cbd5e1; }
+    button.success { background: #059669; color: white; border: none; padding: 9px 18px; border-radius: 6px; font-size: 13px; font-weight: 700; cursor: pointer; }
+    button.danger { background: #dc2626; color: white; border: none; padding: 9px 18px; border-radius: 6px; font-size: 13px; font-weight: 700; cursor: pointer; }
+
+    .vendor-select-inline { padding: 4px 8px; font-size: 12px; border: 1px solid #cbd5e1; border-radius: 4px; background: white; }
+
+    .toast { position: fixed; bottom: 20px; left: 50%; transform: translateX(-50%); padding: 12px 22px; border-radius: 8px; font-size: 13px; font-weight: 600; box-shadow: 0 6px 20px rgba(0,0,0,.2); z-index: 1000; }
+    .toast.success { background: #059669; color: white; }
+    .toast.error { background: #dc2626; color: white; }
+
+    .item-subtable { background: #f8fafc; padding: 8px 12px; border-radius: 4px; font-size: 12px; }
+    .item-subtable-row { padding: 4px 0; border-bottom: 1px solid #e2e8f0; display: flex; gap: 10px; }
+    .item-subtable-row:last-child { border-bottom: none; }
+
+    .empty { text-align: center; color: #94a3b8; padding: 40px 20px; font-size: 14px; }
+
+    .pagination { margin-top: 12px; display: flex; gap: 8px; align-items: center; }
+    .pagination button { background: #e2e8f0; border: none; padding: 6px 12px; border-radius: 4px; font-size: 12px; cursor: pointer; }
+    .pagination button:disabled { opacity: 0.4; cursor: not-allowed; }
+</style>
+</head>
+<body>
+
+<div class="topbar">
+    <div>
+        <h1>DG RESPOND</h1>
+        <div class="sub">Store Manager Desk · Order oversight &amp; item tagging</div>
+    </div>
+    <div style="display:flex; gap:10px; align-items:center;">
+        <span class="store-pill" id="storePill" onclick="changeStore()" title="Click to change">Store —</span>
+        <button onclick="window.location.href='/dashboard'">Back to Dashboard</button>
+    </div>
+</div>
+
+<div class="tabs">
+    <div class="tab active" data-tab="orders" onclick="switchTab('orders')">Vendor Orders</div>
+    <div class="tab" data-tab="returns" onclick="switchTab('returns')">Vendor Returns</div>
+    <div class="tab" data-tab="tag" onclick="switchTab('tag')">Tag Items to Vendors</div>
+    <div class="tab" data-tab="vendors" onclick="switchTab('vendors')">Vendors</div>
+</div>
+
+<div class="container">
+
+    <!-- ORDERS TAB -->
+    <div id="tab-orders">
+        <div class="filter-bar">
+            <button class="filter-btn active" data-filter="ALL"     onclick="setOrderFilter('ALL')">All</button>
+            <button class="filter-btn"        data-filter="OPEN"      onclick="setOrderFilter('OPEN')">Open</button>
+            <button class="filter-btn"        data-filter="SUBMITTED" onclick="setOrderFilter('SUBMITTED')">Submitted</button>
+            <button class="filter-btn"        data-filter="FULFILLED" onclick="setOrderFilter('FULFILLED')">Fulfilled</button>
+            <div style="flex:1;"></div>
+            <input type="text" id="orderSearch" placeholder="Search vendor, PO#, truck, driver…" oninput="renderOrders()">
+        </div>
+        <table>
+            <thead><tr>
+                <th>Order #</th><th>Status</th><th>Vendor</th><th>PO #</th><th>Truck / Driver</th>
+                <th>Lines</th><th>Created</th><th>Expected</th><th>Actions</th>
+            </tr></thead>
+            <tbody id="ordersBody"></tbody>
+        </table>
+    </div>
+
+    <!-- RETURNS TAB -->
+    <div id="tab-returns" style="display:none;">
+        <div class="filter-bar">
+            <button class="filter-btn active" data-rfilter="ALL"       onclick="setReturnFilter('ALL')">All</button>
+            <button class="filter-btn"        data-rfilter="OPEN"      onclick="setReturnFilter('OPEN')">Open</button>
+            <button class="filter-btn"        data-rfilter="CLOSED"    onclick="setReturnFilter('CLOSED')">Closed</button>
+            <button class="filter-btn"        data-rfilter="CANCELLED" onclick="setReturnFilter('CANCELLED')">Cancelled</button>
+            <div style="flex:1;"></div>
+            <input type="text" id="returnSearch" placeholder="Search vendor, credit memo…" oninput="renderReturns()">
+        </div>
+        <table>
+            <thead><tr>
+                <th>Return #</th><th>Status</th><th>Vendor</th><th>Rep</th><th>Credit Memo #</th>
+                <th>Lines / Units</th><th>Opened</th><th>Closed</th><th>Actions</th>
+            </tr></thead>
+            <tbody id="returnsBody"></tbody>
+        </table>
+    </div>
+
+    <!-- VENDORS TAB -->
+    <div id="tab-vendors" style="display:none;">
+        <div class="filter-bar">
+            <input type="text" id="vendorSearch" placeholder="Search code / name / contact…" oninput="renderVendorsTable()">
+            <div style="flex:1;"></div>
+            <button class="primary" onclick="openVendorModal()">+ New Vendor</button>
+        </div>
+        <table>
+            <thead><tr>
+                <th>Code</th><th>Name</th><th>Contact</th><th>Schedule</th><th>SKUs</th><th>Active</th><th>Actions</th>
+            </tr></thead>
+            <tbody id="vendorsBody"></tbody>
+        </table>
+    </div>
+
+    <!-- TAG ITEMS TAB -->
+    <div id="tab-tag" style="display:none;">
+        <div class="filter-bar">
+            <input type="text" id="tagSearch" placeholder="Search SKU / UPC / Name / Dept…" oninput="debouncedLoadTag()">
+            <button class="filter-btn" onclick="loadTagItems(0)">Reload</button>
+            <div style="flex:1;"></div>
+            <span style="font-size:12px; color:#64748b;" id="tagPaginationInfo"></span>
+        </div>
+        <table>
+            <thead><tr>
+                <th>SKU</th><th>UPC</th><th>Name</th><th>Dept</th><th>Price</th><th>Vendor (DSD)</th>
+            </tr></thead>
+            <tbody id="tagBody"></tbody>
+        </table>
+        <div class="pagination">
+            <button onclick="loadTagItems(Math.max(0, tagOffset - tagLimit))">‹ Prev</button>
+            <button onclick="loadTagItems(tagOffset + tagLimit)">Next ›</button>
+        </div>
+    </div>
+
+</div>
+
+<!-- STORE PICKER -->
+<div class="modal-backdrop" id="storeModal">
+    <div class="modal" style="max-width:420px;">
+        <h3>Which store are you managing?</h3>
+        <p style="color:#64748b; font-size:13px; margin-bottom:14px;">DG Respond needs a store context to know whose orders to show.</p>
+        <div class="field">
+            <label>Store</label>
+            <select id="storeSelect" style="padding:12px;"></select>
+        </div>
+        <div class="modal-actions">
+            <button class="secondary" onclick="window.location.href='/dashboard'">Cancel</button>
+            <button class="primary" onclick="confirmStore()">Use this store</button>
+        </div>
+    </div>
+</div>
+
+<!-- ORDER DETAIL MODAL -->
+<div class="modal-backdrop" id="orderModal">
+    <div class="modal">
+        <h3 id="orderModalTitle">Order #—</h3>
+        <div id="orderModalHeader" style="font-size:13px; color:#64748b; margin-bottom:12px;"></div>
+        <div class="grid-2">
+            <div class="field"><label>PO Number (vendor's)</label><input id="po_number"></div>
+            <div class="field"><label>Carrier</label><input id="carrier"></div>
+            <div class="field"><label>Driver name</label><input id="driver_name"></div>
+            <div class="field"><label>Driver phone</label><input id="driver_phone"></div>
+            <div class="field"><label>Truck / Trailer #</label><input id="truck_number"></div>
+            <div class="field"><label>Expected delivery</label><input id="expected_delivery" type="date"></div>
+            <div class="field" style="grid-column: span 2;"><label>Actual delivery</label><input id="actual_delivery" type="datetime-local"></div>
+        </div>
+        <div class="field"><label>Notes</label><textarea id="order_notes"></textarea></div>
+
+        <h4 style="margin-top:10px; margin-bottom:6px; font-size:13px; color:#64748b;">Items on this order</h4>
+        <div id="orderItems" class="item-subtable"></div>
+
+        <div class="modal-actions">
+            <button class="secondary" onclick="closeModal('orderModal')">Close</button>
+            <button class="primary" onclick="saveOrderMeta()">Save metadata</button>
+            <button class="secondary" onclick="printOrder()">🖨 Reprint</button>
+            <button class="success" id="submitBtn" onclick="submitOrder()" style="display:none;">Submit Order &amp; Print</button>
+            <button class="success" id="fulfillBtn" onclick="fulfillOrder()" style="display:none;">Mark FULFILLED</button>
+            <button class="danger" id="cancelOrderBtn" onclick="cancelOrder()" style="display:none;">Cancel Order</button>
+        </div>
+    </div>
+</div>
+
+<!-- VENDOR CREATE/EDIT MODAL -->
+<div class="modal-backdrop" id="vendorModal">
+    <div class="modal" style="max-width:560px;">
+        <h3 id="vendorModalTitle">New Vendor</h3>
+        <input type="hidden" id="vendor_id_field">
+        <div class="grid-2">
+            <div class="field"><label>Code (short, unique)</label><input id="v_code" placeholder="e.g. COKE" style="text-transform:uppercase;"></div>
+            <div class="field"><label>Active</label><select id="v_active"><option value="1">Active</option><option value="0">Inactive</option></select></div>
+        </div>
+        <div class="field"><label>Name</label><input id="v_name" placeholder="Coca-Cola Bottling Co."></div>
+        <div class="grid-2">
+            <div class="field"><label>Contact name</label><input id="v_contact_name"></div>
+            <div class="field"><label>Contact phone</label><input id="v_contact_phone"></div>
+        </div>
+        <div class="field"><label>Contact email</label><input id="v_contact_email" type="email"></div>
+        <div class="field"><label>Delivery schedule</label><input id="v_schedule" placeholder="Tue & Fri mornings"></div>
+        <div class="field"><label>Notes</label><textarea id="v_notes"></textarea></div>
+        <div class="modal-actions">
+            <button class="secondary" onclick="closeModal('vendorModal')">Cancel</button>
+            <button class="primary" onclick="saveVendor()">Save</button>
+        </div>
+    </div>
+</div>
+
+<!-- RETURN DETAIL MODAL -->
+<div class="modal-backdrop" id="returnModal">
+    <div class="modal">
+        <h3 id="returnModalTitle">Return #—</h3>
+        <div id="returnModalHeader" style="font-size:13px; color:#64748b; margin-bottom:12px;"></div>
+        <div class="grid-2">
+            <div class="field"><label>Credit memo #</label><input id="return_memo"></div>
+            <div class="field"><label>Rep name</label><input id="return_rep" disabled></div>
+        </div>
+        <h4 style="margin-top:10px; margin-bottom:6px; font-size:13px; color:#64748b;">Items returned</h4>
+        <div id="returnItems" class="item-subtable"></div>
+        <div class="modal-actions">
+            <button class="secondary" onclick="closeModal('returnModal')">Close</button>
+            <button class="secondary" onclick="printReturn()">🖨 Reprint memo</button>
+            <button class="success" id="closeReturnBtn" onclick="closeReturnAction()" style="display:none;">Close Return &amp; Print Memo</button>
+            <button class="danger" id="cancelReturnBtn" onclick="cancelReturn()" style="display:none;">Cancel Return</button>
+        </div>
+    </div>
+</div>
+
+<script>
+    let currentStoreId = localStorage.getItem('district_store_id') || '';
+    let vendors = [];
+    let orders = [];
+    let returns = [];
+    let currentTab = 'orders';
+    let orderFilter = 'ALL';
+    let returnFilter = 'ALL';
+    let currentOrderId = null;
+    let currentReturnId = null;
+    let tagOffset = 0;
+    let tagLimit = 50;
+    let tagTotal = 0;
+    let debounceTimer = null;
+
+    function updateStorePill() {
+        document.getElementById('storePill').innerText = currentStoreId ? 'Store #' + currentStoreId : 'No store';
+    }
+    updateStorePill();
+
+    async function api(url, opts = {}) {
+        opts.headers = opts.headers || {};
+        if (currentStoreId) opts.headers['X-Store-ID'] = currentStoreId;
+        if (opts.body && !opts.headers['Content-Type']) opts.headers['Content-Type'] = 'application/json';
+        const res = await fetch(url, opts);
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok && data.message) toast(data.message, 'error');
+        return data;
+    }
+
+    function toast(msg, type = 'success') {
+        const t = document.createElement('div');
+        t.className = 'toast ' + type;
+        t.innerText = msg;
+        document.body.appendChild(t);
+        setTimeout(() => t.remove(), 2500);
+    }
+
+    function openModal(id) { document.getElementById(id).classList.add('open'); }
+    function closeModal(id) { document.getElementById(id).classList.remove('open'); }
+
+    async function ensureStore() {
+        if (currentStoreId) return true;
+        const stores = await (await fetch('/api/stores')).json();
+        const sel = document.getElementById('storeSelect');
+        sel.innerHTML = '<option value="">Pick a store…</option>' +
+            (Array.isArray(stores) ? stores.map(s => `<option value="${s.id}">#${s.id} — ${s.name}</option>`).join('') : '');
+        openModal('storeModal');
+        return false;
+    }
+
+    function confirmStore() {
+        const v = document.getElementById('storeSelect').value;
+        if (!v) { toast('Pick a store first', 'error'); return; }
+        currentStoreId = v;
+        localStorage.setItem('district_store_id', v);
+        updateStorePill();
+        closeModal('storeModal');
+        bootAll();
+    }
+
+    async function changeStore() {
+        currentStoreId = ''; updateStorePill();
+        await ensureStore();
+    }
+
+    function switchTab(name) {
+        currentTab = name;
+        document.querySelectorAll('.tab').forEach(t => t.classList.toggle('active', t.dataset.tab === name));
+        ['orders','returns','tag','vendors'].forEach(k => {
+            document.getElementById('tab-' + k).style.display = (k === name) ? '' : 'none';
+        });
+        if (name === 'orders') loadOrders();
+        if (name === 'returns') loadReturns();
+        if (name === 'tag') loadTagItems(0);
+        if (name === 'vendors') loadVendorsTab();
+    }
+
+    // ============ ORDERS ============
+    async function loadOrders() {
+        orders = await api('/api/vendor-orders') || [];
+        if (!Array.isArray(orders)) orders = [];
+        renderOrders();
+    }
+    function setOrderFilter(f) {
+        orderFilter = f;
+        document.querySelectorAll('[data-filter]').forEach(b => b.classList.toggle('active', b.dataset.filter === f));
+        renderOrders();
+    }
+    function renderOrders() {
+        const q = (document.getElementById('orderSearch').value || '').toLowerCase();
+        const filtered = orders.filter(o => {
+            if (orderFilter !== 'ALL' && o.status !== orderFilter) return false;
+            if (!q) return true;
+            return [o.vendor_name, o.vendor_code, o.po_number, o.truck_number, o.driver_name, o.carrier]
+                .filter(Boolean).some(s => String(s).toLowerCase().includes(q));
+        });
+        const tb = document.getElementById('ordersBody');
+        if (filtered.length === 0) { tb.innerHTML = '<tr><td colspan="9" class="empty">No orders match.</td></tr>'; return; }
+        tb.innerHTML = filtered.map(o => `
+            <tr>
+                <td><strong>#${o.id}</strong></td>
+                <td><span class="status ${o.status.toLowerCase()}">${o.status}</span></td>
+                <td>${o.vendor_name || '—'}<br><small style="color:#64748b;">${o.vendor_code || ''}</small></td>
+                <td>${o.po_number || '<span style="color:#94a3b8;">—</span>'}</td>
+                <td>${o.truck_number || '—'}${o.driver_name ? '<br><small style="color:#64748b;">' + o.driver_name + '</small>' : ''}</td>
+                <td>${o.line_count} / ${o.unit_count}</td>
+                <td>${o.created_at ? new Date(o.created_at).toLocaleString() : '—'}</td>
+                <td>${o.expected_delivery ? o.expected_delivery.slice(0,10) : '<span style="color:#94a3b8;">—</span>'}</td>
+                <td>
+                    <span class="action-link" onclick="openOrder(${o.id})">Open</span>
+                    <span class="action-link" onclick="printOrderById(${o.id})">Print</span>
+                </td>
+            </tr>
+        `).join('');
+    }
+    async function openOrder(id) {
+        const r = await api('/api/vendor-orders/' + id);
+        if (!r.success) return;
+        currentOrderId = id;
+        const o = r.order, items = r.items || [];
+        document.getElementById('orderModalTitle').innerText = `Order #${o.id} — ${r.vendor?.name || '—'} (${r.vendor?.code || '—'})`;
+        document.getElementById('orderModalHeader').innerHTML = `
+            <strong>Status:</strong> <span class="status ${o.status.toLowerCase()}">${o.status}</span> &nbsp;·&nbsp;
+            <strong>Rep:</strong> ${o.rep_name || '—'} &nbsp;·&nbsp;
+            <strong>Created:</strong> ${o.created_at ? new Date(o.created_at).toLocaleString() : '—'}
+            ${o.submitted_at ? '<br><strong>Submitted:</strong> ' + new Date(o.submitted_at).toLocaleString() : ''}
+            ${o.fulfilled_at ? '<br><strong>Fulfilled:</strong> ' + new Date(o.fulfilled_at).toLocaleString() : ''}
+        `;
+        // Populate inputs
+        document.getElementById('po_number').value = o.po_number || '';
+        document.getElementById('carrier').value = o.carrier || '';
+        document.getElementById('driver_name').value = o.driver_name || '';
+        document.getElementById('driver_phone').value = o.driver_phone || '';
+        document.getElementById('truck_number').value = o.truck_number || '';
+        document.getElementById('expected_delivery').value = o.expected_delivery ? o.expected_delivery.slice(0,10) : '';
+        document.getElementById('actual_delivery').value = o.actual_delivery ? o.actual_delivery.slice(0,16) : '';
+        document.getElementById('order_notes').value = o.notes || '';
+        document.getElementById('submitBtn').style.display = (o.status === 'OPEN') ? '' : 'none';
+        document.getElementById('fulfillBtn').style.display = (o.status === 'SUBMITTED') ? '' : 'none';
+        document.getElementById('cancelOrderBtn').style.display = (o.status === 'OPEN' || o.status === 'SUBMITTED') ? '' : 'none';
+        document.getElementById('orderItems').innerHTML = items.length === 0
+            ? '<div class="empty">No items.</div>'
+            : items.map(it => `<div class="item-subtable-row">
+                <div style="flex:2;"><strong>${it.sku}</strong> — ${it.name || '—'}</div>
+                <div>qty <strong>${it.quantity_requested}</strong></div>
+                <div style="color:#64748b;">OH ${it.on_hand ?? '—'}</div>
+                <div style="color:#94a3b8;">${it.notes || ''}</div>
+            </div>`).join('');
+        openModal('orderModal');
+    }
+    async function saveOrderMeta() {
+        if (!currentOrderId) return;
+        const body = {
+            po_number: document.getElementById('po_number').value,
+            carrier: document.getElementById('carrier').value,
+            driver_name: document.getElementById('driver_name').value,
+            driver_phone: document.getElementById('driver_phone').value,
+            truck_number: document.getElementById('truck_number').value,
+            expected_delivery: document.getElementById('expected_delivery').value || null,
+            actual_delivery: document.getElementById('actual_delivery').value ? document.getElementById('actual_delivery').value.replace('T', ' ') + ':00' : null,
+            notes: document.getElementById('order_notes').value
+        };
+        const res = await api('/api/vendor-orders/' + currentOrderId + '/meta', { method: 'PUT', body: JSON.stringify(body) });
+        if (res && res.success) { toast('Metadata saved.', 'success'); loadOrders(); }
+    }
+    async function fulfillOrder() {
+        if (!currentOrderId) return;
+        const actual = document.getElementById('actual_delivery').value;
+        const res = await api('/api/vendor-orders/' + currentOrderId + '/fulfill', {
+            method: 'POST',
+            body: JSON.stringify({ actual_delivery: actual ? actual.replace('T', ' ') + ':00' : null })
+        });
+        if (res && res.success) { toast('Order fulfilled.', 'success'); closeModal('orderModal'); loadOrders(); }
+    }
+    async function submitOrder() {
+        if (!currentOrderId) return;
+        if (!confirm('Submit this order to the vendor? After submitting you can still edit metadata but cannot add items.')) return;
+        // Save any unsaved metadata first so nothing is lost
+        await saveOrderMeta();
+        const res = await api('/api/vendor-orders/' + currentOrderId + '/submit', { method: 'POST', body: '{}' });
+        if (res && res.success) {
+            try { await api('/api/vendor-orders/' + currentOrderId + '/print', { method: 'POST' }); } catch (_) {}
+            toast('Order submitted — printing.', 'success');
+            closeModal('orderModal');
+            loadOrders();
+        }
+    }
+    async function cancelOrder() {
+        if (!currentOrderId) return;
+        if (!confirm('Cancel this order? This cannot be undone. (Orders don\'t touch inventory, so nothing to credit back.)')) return;
+        const res = await api('/api/vendor-orders/' + currentOrderId + '/cancel', { method: 'POST', body: '{}' });
+        if (res && res.success) {
+            toast('Order cancelled.', 'success');
+            closeModal('orderModal');
+            loadOrders();
+        }
+    }
+    async function printOrder() { if (currentOrderId) printOrderById(currentOrderId); }
+    async function printOrderById(id) {
+        const res = await api('/api/vendor-orders/' + id + '/print', { method: 'POST' });
+        if (res && res.success) toast(res.message || 'Sent to printer.', 'success');
+    }
+
+    // ============ RETURNS ============
+    async function loadReturns() {
+        returns = await api('/api/vendor-returns') || [];
+        if (!Array.isArray(returns)) returns = [];
+        renderReturns();
+    }
+    function setReturnFilter(f) {
+        returnFilter = f;
+        document.querySelectorAll('[data-rfilter]').forEach(b => b.classList.toggle('active', b.dataset.rfilter === f));
+        renderReturns();
+    }
+    function renderReturns() {
+        const q = (document.getElementById('returnSearch').value || '').toLowerCase();
+        const filtered = returns.filter(r => {
+            if (returnFilter !== 'ALL' && r.status !== returnFilter) return false;
+            if (!q) return true;
+            return [r.vendor_name, r.vendor_code, r.credit_memo_number, r.rep_name]
+                .filter(Boolean).some(s => String(s).toLowerCase().includes(q));
+        });
+        const tb = document.getElementById('returnsBody');
+        if (filtered.length === 0) { tb.innerHTML = '<tr><td colspan="9" class="empty">No returns match.</td></tr>'; return; }
+        tb.innerHTML = filtered.map(r => `
+            <tr>
+                <td><strong>#${r.id}</strong></td>
+                <td><span class="status ${r.status.toLowerCase()}">${r.status}</span></td>
+                <td>${r.vendor_name || '—'}<br><small style="color:#64748b;">${r.vendor_code || ''}</small></td>
+                <td>${r.rep_name || '<span style="color:#94a3b8;">—</span>'}</td>
+                <td>${r.credit_memo_number || '<span style="color:#94a3b8;">—</span>'}</td>
+                <td>${r.item_count} / ${r.unit_count}</td>
+                <td>${r.created_at ? new Date(r.created_at).toLocaleString() : '—'}</td>
+                <td>${r.closed_at ? new Date(r.closed_at).toLocaleString() : '<span style="color:#94a3b8;">—</span>'}</td>
+                <td>
+                    <span class="action-link" onclick="openReturn(${r.id})">Open</span>
+                    <span class="action-link" onclick="printReturnById(${r.id})">Memo</span>
+                </td>
+            </tr>
+        `).join('');
+    }
+    async function openReturn(id) {
+        const r = await api('/api/vendor-returns/' + id);
+        if (!r.success) return;
+        currentReturnId = id;
+        const ret = r.return, items = r.items || [];
+        document.getElementById('returnModalTitle').innerText = `Return #${ret.id} — ${r.vendor?.name || '—'} (${r.vendor?.code || '—'})`;
+        document.getElementById('returnModalHeader').innerHTML = `
+            <strong>Status:</strong> <span class="status ${ret.status.toLowerCase()}">${ret.status}</span> &nbsp;·&nbsp;
+            <strong>Opened:</strong> ${ret.created_at ? new Date(ret.created_at).toLocaleString() : '—'}
+            ${ret.closed_at ? '<br><strong>Closed:</strong> ' + new Date(ret.closed_at).toLocaleString() : ''}
+        `;
+        document.getElementById('return_memo').value = ret.credit_memo_number || '';
+        document.getElementById('return_rep').value = ret.rep_name || '';
+        document.getElementById('closeReturnBtn').style.display = (ret.status === 'OPEN') ? '' : 'none';
+        document.getElementById('cancelReturnBtn').style.display = (ret.status === 'OPEN') ? '' : 'none';
+        document.getElementById('returnItems').innerHTML = items.length === 0
+            ? '<div class="empty">No items.</div>'
+            : items.map(it => `<div class="item-subtable-row">
+                <div style="flex:2;"><strong>${it.sku}</strong> — ${it.name || '—'}</div>
+                <div>×${it.quantity}</div>
+                <div>${it.reason_code}</div>
+                <div style="color:#94a3b8;">${it.notes || ''}</div>
+            </div>`).join('');
+        openModal('returnModal');
+    }
+    async function closeReturnAction() {
+        if (!currentReturnId) return;
+        if (!confirm('Close this return? The credit memo will print. Once closed it cannot be edited.')) return;
+        const memo = document.getElementById('return_memo').value || null;
+        const res = await api('/api/vendor-returns/' + currentReturnId + '/close', {
+            method: 'POST',
+            body: JSON.stringify({ credit_memo_number: memo })
+        });
+        if (res && res.success) {
+            try { await api('/api/vendor-returns/' + currentReturnId + '/print', { method: 'POST' }); } catch (_) {}
+            toast('Return closed — memo printing.', 'success');
+            closeModal('returnModal');
+            loadReturns();
+        }
+    }
+    async function cancelReturn() {
+        if (!currentReturnId) return;
+        if (!confirm('Cancel this return? All scanned items will be CREDITED BACK to on-hand inventory.')) return;
+        const res = await api('/api/vendor-returns/' + currentReturnId + '/cancel', { method: 'POST', body: '{}' });
+        if (res && res.success) {
+            toast(`Return cancelled${res.credited_back ? ' — ' + res.credited_back + ' line(s) credited back' : ''}.`, 'success');
+            closeModal('returnModal');
+            loadReturns();
+        }
+    }
+    async function printReturn() { if (currentReturnId) printReturnById(currentReturnId); }
+    async function printReturnById(id) {
+        const res = await api('/api/vendor-returns/' + id + '/print', { method: 'POST' });
+        if (res && res.success) toast(res.message || 'Sent to printer.', 'success');
+    }
+
+    // ============ TAG ITEMS ============
+    function debouncedLoadTag() {
+        clearTimeout(debounceTimer);
+        debounceTimer = setTimeout(() => loadTagItems(0), 250);
+    }
+    async function loadVendors() {
+        vendors = await (await fetch('/api/vendors')).json();
+        if (!Array.isArray(vendors)) vendors = [];
+    }
+    async function loadTagItems(offset) {
+        tagOffset = Math.max(0, offset);
+        const q = (document.getElementById('tagSearch').value || '').trim();
+        const res = await (await fetch(`/api/inventory/master-search?q=${encodeURIComponent(q)}&limit=${tagLimit}&offset=${tagOffset}`)).json();
+        const rows = res.rows || [];
+        tagTotal = res.total || 0;
+        document.getElementById('tagPaginationInfo').innerText = `${tagOffset + 1}–${Math.min(tagOffset + rows.length, tagTotal)} of ${tagTotal}`;
+        if (!vendors.length) await loadVendors();
+        const activeVendors = vendors.filter(v => v.active);
+        const tb = document.getElementById('tagBody');
+        if (rows.length === 0) { tb.innerHTML = '<tr><td colspan="6" class="empty">No items match.</td></tr>'; return; }
+        tb.innerHTML = rows.map(r => {
+            const opts = ['<option value="">— none (warehouse) —</option>']
+                .concat(activeVendors.map(v => `<option value="${v.id}"${v.id === r.vendor_id ? ' selected' : ''}>${v.code} — ${v.name}</option>`))
+                .join('');
+            return `<tr>
+                <td><strong>${r.sku}</strong></td>
+                <td>${r.upc || ''}</td>
+                <td>${r.name || ''}</td>
+                <td>${r.department || ''}</td>
+                <td>$${Number(r.std_price || 0).toFixed(2)}</td>
+                <td><select class="vendor-select-inline" onchange="tagSku('${r.sku}', this.value)">${opts}</select></td>
+            </tr>`;
+        }).join('');
+    }
+    async function tagSku(sku, vendor_id) {
+        const res = await fetch('/api/vendors/master-tag', {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ sku, vendor_id: vendor_id ? parseInt(vendor_id, 10) : null })
+        });
+        const data = await res.json().catch(() => ({}));
+        if (data.success) toast(vendor_id ? 'Tagged to vendor.' : 'Untagged.', 'success');
+        else toast(data.message || 'Failed', 'error');
+    }
+
+    // ============ VENDORS ============
+    async function loadVendorsTab() {
+        await loadVendors();
+        renderVendorsTable();
+    }
+    function renderVendorsTable() {
+        const q = (document.getElementById('vendorSearch').value || '').toLowerCase();
+        const filtered = vendors.filter(v => {
+            if (!q) return true;
+            return [v.code, v.name, v.contact_name, v.contact_phone, v.contact_email, v.delivery_schedule]
+                .filter(Boolean).some(s => String(s).toLowerCase().includes(q));
+        });
+        const tb = document.getElementById('vendorsBody');
+        if (filtered.length === 0) {
+            tb.innerHTML = `<tr><td colspan="7" class="empty">No vendors yet. Click <strong>+ New Vendor</strong> to add one.</td></tr>`;
+            return;
+        }
+        tb.innerHTML = filtered.map(v => `
+            <tr${v.active ? '' : ' style="opacity:0.5;"'}>
+                <td><strong>${v.code}</strong></td>
+                <td>${v.name}</td>
+                <td>${v.contact_name || ''}${v.contact_phone ? '<br><small style="color:#64748b;">' + v.contact_phone + '</small>' : ''}</td>
+                <td>${v.delivery_schedule || '<span style="color:#94a3b8;">—</span>'}</td>
+                <td>${v.sku_count || 0}</td>
+                <td>${v.active
+                    ? '<span class="status submitted">ACTIVE</span>'
+                    : '<span class="status cancelled">INACTIVE</span>'}</td>
+                <td>
+                    <span class="action-link" onclick="openVendorModal(${v.id})">Edit</span>
+                    ${v.active ? `<span class="action-link danger" onclick="deactivateVendor(${v.id})">Deactivate</span>` : ''}
+                </td>
+            </tr>`).join('');
+    }
+    function openVendorModal(id) {
+        const v = id ? vendors.find(x => x.id === id) : null;
+        document.getElementById('vendorModalTitle').innerText = v ? 'Edit Vendor' : 'New Vendor';
+        document.getElementById('vendor_id_field').value = v ? v.id : '';
+        document.getElementById('v_code').value = v ? v.code : '';
+        document.getElementById('v_name').value = v ? v.name : '';
+        document.getElementById('v_contact_name').value = v ? (v.contact_name || '') : '';
+        document.getElementById('v_contact_phone').value = v ? (v.contact_phone || '') : '';
+        document.getElementById('v_contact_email').value = v ? (v.contact_email || '') : '';
+        document.getElementById('v_schedule').value = v ? (v.delivery_schedule || '') : '';
+        document.getElementById('v_notes').value = v ? (v.notes || '') : '';
+        document.getElementById('v_active').value = v ? String(v.active) : '1';
+        openModal('vendorModal');
+    }
+    async function saveVendor() {
+        const id = document.getElementById('vendor_id_field').value;
+        const body = {
+            code: document.getElementById('v_code').value.trim().toUpperCase(),
+            name: document.getElementById('v_name').value.trim(),
+            contact_name: document.getElementById('v_contact_name').value,
+            contact_phone: document.getElementById('v_contact_phone').value,
+            contact_email: document.getElementById('v_contact_email').value,
+            delivery_schedule: document.getElementById('v_schedule').value,
+            notes: document.getElementById('v_notes').value,
+            active: parseInt(document.getElementById('v_active').value, 10) === 1
+        };
+        if (!body.code || !body.name) { toast('Code and name are required', 'error'); return; }
+        const url = id ? '/api/vendors/' + id : '/api/vendors';
+        const method = id ? 'PUT' : 'POST';
+        const res = await fetch(url, { method, headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+        const data = await res.json().catch(() => ({}));
+        if (res.ok && (data.success || data.id)) {
+            toast(id ? 'Vendor updated.' : 'Vendor created.', 'success');
+            closeModal('vendorModal');
+            await loadVendors();
+            renderVendorsTable();
+            // Also refresh tag-tab dropdowns if they're open
+            if (currentTab === 'tag') loadTagItems(tagOffset);
+        } else {
+            toast(data.message || 'Failed to save vendor', 'error');
+        }
+    }
+    async function deactivateVendor(id) {
+        if (!confirm('Deactivate this vendor? Historic records stay intact.')) return;
+        const res = await fetch('/api/vendors/' + id, { method: 'DELETE' });
+        const data = await res.json().catch(() => ({}));
+        if (data.success) {
+            toast('Vendor deactivated.', 'success');
+            await loadVendors();
+            renderVendorsTable();
+            if (currentTab === 'tag') loadTagItems(tagOffset);
+        }
+    }
+
+    // ============ BOOT ============
+    async function bootAll() {
+        await loadVendors();
+        loadOrders();
+    }
+    (async () => { if (await ensureStore()) bootAll(); })();
+</script>
+
+</body>
+</html>

@@ -303,6 +303,66 @@ public class PrinterService {
 
     private static String s(String val) { return val != null ? val : ""; }
 
+    public static void printZOutReport(DatabaseManager.ZOutData data) {
+        try {
+            java.io.ByteArrayOutputStream baos = new java.io.ByteArrayOutputStream();
+            baos.write(INIT);
+            baos.write(CENTER);
+            baos.write(BOLD_ON);
+            baos.write("DOLLAR GENERAL STORE #14302\n".getBytes());
+            baos.write("216 BELKNAP ST\n".getBytes());
+            baos.write("SUPERIOR, WI 54880\n".getBytes());
+            baos.write(BOLD_OFF);
+            baos.write("\n".getBytes());
+            baos.write(BOLD_ON);
+            baos.write("*** Z-OUT REPORT ***\n".getBytes());
+            baos.write(BOLD_OFF);
+            String dateStr = new SimpleDateFormat("MM/dd/yy hh:mm a").format(new Date());
+            baos.write((dateStr + "\n").getBytes());
+            baos.write(("Cashier: " + data.cashierName.toUpperCase() + " (" + data.cashierEid + ")\n").getBytes());
+
+            baos.write(LEFT);
+            baos.write("--------------------------------\n".getBytes());
+            baos.write(String.format("%-20s %10s\n", "CARD SALES:", String.format("$%.2f", data.cardSales)).getBytes());
+            baos.write(String.format("%-20s %10s\n", "CASH SALES:", String.format("$%.2f", data.cashSales)).getBytes());
+            baos.write(BOLD_ON);
+            baos.write(String.format("%-20s %10s\n", "TOTAL SALES:", String.format("$%.2f", data.cashSales + data.cardSales)).getBytes());
+            baos.write(BOLD_OFF);
+            baos.write(String.format("%-20s %10s\n", "SALE SAVINGS:", String.format("$%.2f", data.totalSavings)).getBytes());
+            baos.write("\n".getBytes());
+
+            if (!data.pickups.isEmpty()) {
+                baos.write("PICKUPS:\n".getBytes());
+                for (int i = 0; i < data.pickups.size(); i++) {
+                    baos.write(String.format("  Pickup #%d           $%.2f\n", i + 1, data.pickups.get(i)).getBytes());
+                }
+                baos.write(String.format("%-20s %10s\n", "TOTAL PICKUPS:", String.format("$%.2f", data.getTotalPickups())).getBytes());
+            } else {
+                baos.write("NO PICKUPS THIS SESSION\n".getBytes());
+            }
+            baos.write("\n".getBytes());
+
+            baos.write("--------------------------------\n".getBytes());
+            baos.write(String.format("%-20s %10s\n", "STARTING BANK:", String.format("$%.2f", data.startingBank)).getBytes());
+            baos.write(String.format("%-20s %10s\n", "+ CASH SALES:", String.format("$%.2f", data.cashSales)).getBytes());
+            baos.write(String.format("%-20s %10s\n", "- PICKUPS:", String.format("$%.2f", data.getTotalPickups())).getBytes());
+            baos.write("================================\n".getBytes());
+            baos.write(BOLD_ON);
+            baos.write(String.format("%-20s %10s\n", "EXPECTED CASH:", String.format("$%.2f", data.getExpectedCash())).getBytes());
+            baos.write(BOLD_OFF);
+
+            baos.write(CENTER);
+            baos.write("\nKeep this receipt in the\n".getBytes());
+            baos.write("manager safe.\n".getBytes());
+            baos.write(FEED_3);
+            baos.write(CUT);
+
+            sendToPrinter(baos.toByteArray());
+        } catch (Exception e) {
+            e.printStackTrace();
+        }
+    }
+
     public static void printCoupon() {
         // Fetch active promotions from DB (weekly deal + Saturday special)
         DatabaseManager.PromotionData weekly   = DatabaseManager.getActivePromotion("WEEKLY");

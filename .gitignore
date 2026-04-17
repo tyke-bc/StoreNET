@@ -1,1 +1,11 @@
 /dgPOS/target
+/backoffice_web/node_modules
+/handheld_app/.gradle
+/handheld_app/.idea
+/handheld_app/.kotlin
+/handheld_assets
+/RecieptApp/photos
+/RecieptApp/__pycache__
+/.claude
+/.idea
+/www.dollargeneral.com.har

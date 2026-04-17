@@ -164,6 +164,18 @@ public class DatabaseManager {
             }
 
             try (Statement st = conn.createStatement()) {
+                st.execute("CREATE TABLE IF NOT EXISTS pickups (" +
+                        "id INT AUTO_INCREMENT PRIMARY KEY, " +
+                        "eid VARCHAR(50) NOT NULL, " +
+                        "amount DECIMAL(10,2) NOT NULL, " +
+                        "authorized_by VARCHAR(50), " +
+                        "created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP)");
+                st.execute("CREATE TABLE IF NOT EXISTS till_config (" +
+                        "`key` VARCHAR(50) PRIMARY KEY, " +
+                        "value TEXT)");
+            }
+
+            try (Statement st = conn.createStatement()) {
                 st.execute("CREATE TABLE IF NOT EXISTS promotions (" +
                         "id INT AUTO_INCREMENT PRIMARY KEY, " +
                         "type ENUM('WEEKLY','SATURDAY') NOT NULL, " +
@@ -581,5 +593,181 @@ public class DatabaseManager {
             this.location = location != null ? location : "";
             this.faces = faces != null ? faces : "F1";
         }
+    }
+
+    // --- TILL / DRAWER MANAGEMENT ---
+
+    public static void recordPickup(String eid, double amount, String authorizedBy) {
+        new Thread(() -> {
+            try (Connection conn = getConnection();
+                 PreparedStatement stmt = conn.prepareStatement(
+                         "INSERT INTO pickups (eid, amount, authorized_by) VALUES (?, ?, ?)")) {
+                stmt.setString(1, eid);
+                stmt.setDouble(2, amount);
+                stmt.setString(3, authorizedBy);
+                stmt.executeUpdate();
+            } catch (Exception e) {
+                System.err.println("Pickup recording failed: " + e.getMessage());
+            }
+        }).start();
+    }
+
+    public static void setHeldDrawer(String eid, String name) {
+        try (Connection conn = getConnection()) {
+            try (PreparedStatement stmt = conn.prepareStatement(
+                    "INSERT INTO till_config (`key`, value) VALUES ('held_eid', ?) ON DUPLICATE KEY UPDATE value = ?")) {
+                stmt.setString(1, eid); stmt.setString(2, eid); stmt.executeUpdate();
+            }
+            try (PreparedStatement stmt = conn.prepareStatement(
+                    "INSERT INTO till_config (`key`, value) VALUES ('held_name', ?) ON DUPLICATE KEY UPDATE value = ?")) {
+                stmt.setString(1, name); stmt.setString(2, name); stmt.executeUpdate();
+            }
+        } catch (Exception e) {
+            System.err.println("Set held drawer failed: " + e.getMessage());
+        }
+    }
+
+    public static UserData getHeldDrawer() {
+        try (Connection conn = getConnection();
+             PreparedStatement stmt = conn.prepareStatement(
+                     "SELECT `key`, value FROM till_config WHERE `key` IN ('held_eid', 'held_name')")) {
+            try (ResultSet rs = stmt.executeQuery()) {
+                String eid = null, name = null;
+                while (rs.next()) {
+                    if ("held_eid".equals(rs.getString("key"))) eid = rs.getString("value");
+                    else if ("held_name".equals(rs.getString("key"))) name = rs.getString("value");
+                }
+                if (eid != null && name != null) return new UserData(eid, name, "");
+            }
+        } catch (Exception e) {
+            System.err.println("Get held drawer failed: " + e.getMessage());
+        }
+        return null;
+    }
+
+    public static void clearHeldDrawer() {
+        try (Connection conn = getConnection();
+             PreparedStatement stmt = conn.prepareStatement(
+                     "DELETE FROM till_config WHERE `key` IN ('held_eid', 'held_name')")) {
+            stmt.executeUpdate();
+        } catch (Exception e) {
+            System.err.println("Clear held drawer failed: " + e.getMessage());
+        }
+    }
+
+    public static void setStartingBank(double amount) {
+        try (Connection conn = getConnection();
+             PreparedStatement stmt = conn.prepareStatement(
+                     "INSERT INTO till_config (`key`, value) VALUES ('starting_bank', ?) ON DUPLICATE KEY UPDATE value = ?")) {
+            stmt.setString(1, String.valueOf(amount));
+            stmt.setString(2, String.valueOf(amount));
+            stmt.executeUpdate();
+        } catch (Exception e) {
+            System.err.println("Set starting bank failed: " + e.getMessage());
+        }
+    }
+
+    public static double getStartingBank() {
+        try (Connection conn = getConnection();
+             PreparedStatement stmt = conn.prepareStatement(
+                     "SELECT value FROM till_config WHERE `key` = 'starting_bank'")) {
+            try (ResultSet rs = stmt.executeQuery()) {
+                if (rs.next()) return Double.parseDouble(rs.getString("value"));
+            }
+        } catch (Exception e) {
+            System.err.println("Get starting bank failed: " + e.getMessage());
+        }
+        return 150.00; // default if never set
+    }
+
+    public static class ZOutData {
+        public final String cashierEid, cashierName;
+        public final double cashSales, cardSales, totalSavings;
+        public final java.util.List<Double> pickups;
+        public final double startingBank;
+
+        public ZOutData(String cashierEid, String cashierName, double cashSales, double cardSales,
+                        double totalSavings, java.util.List<Double> pickups) {
+            this.cashierEid = cashierEid;
+            this.cashierName = cashierName;
+            this.cashSales = cashSales;
+            this.cardSales = cardSales;
+            this.totalSavings = totalSavings;
+            this.pickups = pickups;
+            this.startingBank = getStartingBank();
+        }
+
+        public double getTotalPickups() {
+            return pickups.stream().mapToDouble(Double::doubleValue).sum();
+        }
+
+        public double getExpectedCash() {
+            return startingBank + cashSales - getTotalPickups();
+        }
+    }
+
+    public static ZOutData getZOutData(String eid) {
+        String name = getUserName(eid);
+        double cashSales = 0, cardSales = 0, totalSavings = 0;
+        java.util.List<Double> pickups = new java.util.ArrayList<>();
+
+        try (Connection conn = getConnection()) {
+            // Find when this session started (most recent LOGIN for this eid)
+            java.sql.Timestamp sessionStart = null;
+            try (PreparedStatement stmt = conn.prepareStatement(
+                    "SELECT timestamp FROM transaction_logs WHERE eid = ? AND action = 'LOGIN' " +
+                    "ORDER BY timestamp DESC LIMIT 1")) {
+                stmt.setString(1, eid);
+                try (ResultSet rs = stmt.executeQuery()) {
+                    if (rs.next()) sessionStart = rs.getTimestamp("timestamp");
+                }
+            }
+
+            // Sum cash and card sales since session start
+            String salesSql = "SELECT " +
+                    "SUM(CASE WHEN tender_type='CASH' AND total > 0 THEN total ELSE 0 END) AS cash_sales, " +
+                    "SUM(CASE WHEN tender_type='CARD' AND total > 0 THEN total ELSE 0 END) AS card_sales " +
+                    "FROM receipts WHERE eid = ?" +
+                    (sessionStart != null ? " AND timestamp >= ?" : "");
+            try (PreparedStatement stmt = conn.prepareStatement(salesSql)) {
+                stmt.setString(1, eid);
+                if (sessionStart != null) stmt.setTimestamp(2, sessionStart);
+                try (ResultSet rs = stmt.executeQuery()) {
+                    if (rs.next()) {
+                        cashSales = rs.getDouble("cash_sales");
+                        cardSales = rs.getDouble("card_sales");
+                    }
+                }
+            }
+
+            // Sum sale savings from receipt items
+            String savingsSql = "SELECT COALESCE(SUM(GREATEST(ri.original_price - ri.price, 0) * ri.quantity), 0) AS savings " +
+                    "FROM receipts r JOIN receipt_items ri ON r.id = ri.receipt_id " +
+                    "WHERE r.eid = ? AND r.total > 0" +
+                    (sessionStart != null ? " AND r.timestamp >= ?" : "");
+            try (PreparedStatement stmt = conn.prepareStatement(savingsSql)) {
+                stmt.setString(1, eid);
+                if (sessionStart != null) stmt.setTimestamp(2, sessionStart);
+                try (ResultSet rs = stmt.executeQuery()) {
+                    if (rs.next()) totalSavings = rs.getDouble("savings");
+                }
+            }
+
+            // Get pickups since session start
+            String pickupSql = "SELECT amount FROM pickups WHERE eid = ?" +
+                    (sessionStart != null ? " AND created_at >= ?" : "") +
+                    " ORDER BY created_at";
+            try (PreparedStatement stmt = conn.prepareStatement(pickupSql)) {
+                stmt.setString(1, eid);
+                if (sessionStart != null) stmt.setTimestamp(2, sessionStart);
+                try (ResultSet rs = stmt.executeQuery()) {
+                    while (rs.next()) pickups.add(rs.getDouble("amount"));
+                }
+            }
+        } catch (Exception e) {
+            System.err.println("ZOut data query failed: " + e.getMessage());
+        }
+
+        return new ZOutData(eid, name, cashSales, cardSales, totalSavings, pickups);
     }
 }

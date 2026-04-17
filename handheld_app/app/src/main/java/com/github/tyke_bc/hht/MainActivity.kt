@@ -23,6 +23,7 @@ class MainActivity : ComponentActivity() {
         val scanEvents = _scanEvents.asSharedFlow()
         var loggedInUser: String = "Default User"
         var loggedInRole: String = "SA"
+        var loggedInEid: String = ""
     }
 
     private val scanReceiver = object : BroadcastReceiver() {
@@ -67,10 +68,10 @@ fun HHTApp() {
     NavHost(navController = navController, startDestination = "launcher") {
         composable("launcher") {
             LauncherScreen(onOpenApp = { appName ->
-                if (appName == "HHT") {
-                    navController.navigate("login")
-                } else if (appName == "COMPASS") {
-                    navController.navigate("scan/14302")
+                when (appName) {
+                    "HHT" -> navController.navigate("login")
+                    "COMPASS" -> navController.navigate("scan/14302")
+                    "RESPOND" -> navController.navigate("respond/14302")
                 }
             })
         }
@@ -84,6 +85,12 @@ fun HHTApp() {
         composable("scan/{storeId}") { backStackEntry ->
             val storeId = backStackEntry.arguments?.getString("storeId") ?: "14302"
             ScanScreen(storeId = storeId, onBackToLauncher = {
+                navController.popBackStack("launcher", inclusive = false)
+            })
+        }
+        composable("respond/{storeId}") { backStackEntry ->
+            val storeId = backStackEntry.arguments?.getString("storeId") ?: "14302"
+            RespondScreen(storeId = storeId, onBack = {
                 navController.popBackStack("launcher", inclusive = false)
             })
         }

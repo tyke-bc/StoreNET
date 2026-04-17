@@ -54,11 +54,33 @@ async function initEnterpriseDatabase() {
             name VARCHAR(100),
             department VARCHAR(50),
             std_price DECIMAL(10,2),
-            pack_size INT DEFAULT 1
+            pack_size INT DEFAULT 6
         )`);
 
         try {
-            await connection.query(`ALTER TABLE master_inventory ADD COLUMN pack_size INT DEFAULT 1`);
+            await connection.query(`ALTER TABLE master_inventory ADD COLUMN pack_size INT DEFAULT 6`);
+        } catch (e) {}
+
+        // Vendors (DSD suppliers — Coke, Frito-Lay, bread distributors, etc.)
+        await connection.query(`CREATE TABLE IF NOT EXISTS vendors (
+            id INT AUTO_INCREMENT PRIMARY KEY,
+            code VARCHAR(20) UNIQUE NOT NULL,
+            name VARCHAR(100) NOT NULL,
+            contact_name VARCHAR(100),
+            contact_phone VARCHAR(30),
+            contact_email VARCHAR(100),
+            delivery_schedule VARCHAR(100),
+            notes VARCHAR(500),
+            active TINYINT DEFAULT 1,
+            created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+        )`);
+
+        // Tag master SKUs to a vendor (nullable — warehouse items have NULL)
+        try {
+            await connection.query(`ALTER TABLE master_inventory ADD COLUMN vendor_id INT NULL`);
+        } catch (e) {}
+        try {
+            await connection.query(`ALTER TABLE master_inventory ADD CONSTRAINT fk_mi_vendor FOREIGN KEY (vendor_id) REFERENCES vendors(id) ON DELETE SET NULL`);
         } catch (e) {}
 
         await connection.query(`CREATE TABLE IF NOT EXISTS pricing_events (
@@ -118,12 +140,29 @@ async function initEnterpriseDatabase() {
             await connection.query(`ALTER TABLE planogram_items ADD COLUMN position INT DEFAULT 1`);
         } catch (e) {}
 
+        try {
+            await connection.query(`ALTER TABLE planograms ADD COLUMN pog_type VARCHAR(20) DEFAULT 'standard'`);
+        } catch (e) {}
+
+        try {
+            await connection.query(`ALTER TABLE planograms ADD COLUMN predecessor_pog_id VARCHAR(50) NULL`);
+        } catch (e) {}
+
         await connection.query(`CREATE TABLE IF NOT EXISTS push_logs (
             id INT AUTO_INCREMENT PRIMARY KEY,
             store_id INT,
             event_id INT,
             pushed_at DATETIME DEFAULT CURRENT_TIMESTAMP,
             FOREIGN KEY (store_id) REFERENCES stores(id)
+        )`);
+
+        await connection.query(`CREATE TABLE IF NOT EXISTS cycle_count_schedule (
+            id INT AUTO_INCREMENT PRIMARY KEY,
+            planogram_id INT,
+            section VARCHAR(10),
+            day_of_week TINYINT NOT NULL,
+            FOREIGN KEY (planogram_id) REFERENCES planograms(id) ON DELETE CASCADE,
+            UNIQUE KEY uq_pog_section_day (planogram_id, section, day_of_week)
         )`);
 
         // Seed Super Admin if empty
