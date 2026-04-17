@@ -2378,17 +2378,22 @@ app.post('/api/pogs/reset/scan', async (req, res) => {
 // In-progress + recently-completed reset tasks with progress counts.
 // Used by HHT home card ("resets pending") and dashboard Reset History panel.
 // Query ?status=OPEN|DONE|ALL (default OPEN), ?limit=25
+// NOTE: /api/pogs is bypassed by storeContext (see the middleware), so these
+// endpoints resolve the per-store pool manually from the X-Store-ID header.
 app.get('/api/pogs/reset/tasks', async (req, res) => {
+    const storeId = req.headers['x-store-id'];
+    if (!storeId) return res.status(400).json({ success: false, message: 'X-Store-ID header required.' });
     const status = (req.query.status || 'OPEN').toUpperCase();
     const limit = Math.min(100, Math.max(1, parseInt(req.query.limit) || 25));
     try {
+        const pool = await getStorePool(storeId);
         let where = "t.task_type = 'POG_RESET'";
         const params = [];
         if (status === 'OPEN' || status === 'DONE') {
             where += ' AND t.status = ?';
             params.push(status);
         }
-        const [rows] = await req.pool.query(
+        const [rows] = await pool.query(
             `SELECT t.id, t.title, t.status, t.created_at, t.completed_at, t.due_date, t.priority,
                     (SELECT COUNT(*) FROM task_pog_items WHERE task_id = t.id) AS pog_total,
                     (SELECT COUNT(*) FROM task_pog_items WHERE task_id = t.id AND scanned_at IS NOT NULL) AS pog_done,
@@ -2406,10 +2411,13 @@ app.get('/api/pogs/reset/tasks', async (req, res) => {
 
 // Detail for a single reset task, including each child POG's scan state.
 app.get('/api/pogs/reset/tasks/:id', async (req, res) => {
+    const storeId = req.headers['x-store-id'];
+    if (!storeId) return res.status(400).json({ success: false, message: 'X-Store-ID header required.' });
     try {
-        const [tasks] = await req.pool.query("SELECT * FROM tasks WHERE id = ? AND task_type = 'POG_RESET'", [req.params.id]);
+        const pool = await getStorePool(storeId);
+        const [tasks] = await pool.query("SELECT * FROM tasks WHERE id = ? AND task_type = 'POG_RESET'", [req.params.id]);
         if (tasks.length === 0) return res.status(404).json({ success: false, message: 'Reset task not found.' });
-        const [children] = await req.pool.query(
+        const [children] = await pool.query(
             `SELECT id, pog_id, pog_name, pog_dimensions, pog_suffix, scanned_at, scanned_by_eid, scanned_by_name
              FROM task_pog_items WHERE task_id = ? ORDER BY id ASC`,
             [req.params.id]
