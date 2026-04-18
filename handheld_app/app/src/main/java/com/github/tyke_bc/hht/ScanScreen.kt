@@ -1448,11 +1448,16 @@ fun AdjustmentForm(
         Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
             OutlinedButton(
                 onClick = {
-                    val sku = currentItem?.sku
-                    if (sku == null) { toast = "Scan or enter a valid UPC/SKU first"; toastOk = false; return@OutlinedButton }
+                    val item = currentItem
+                    if (item == null) { toast = "Scan or enter a valid UPC/SKU first"; toastOk = false; return@OutlinedButton }
                     scope.launch {
                         try {
-                            val res = RetrofitClient.instance.printSticker(storeId, com.github.tyke_bc.hht.network.PrintRequest(sku))
+                            val res = RetrofitClient.instance.printSticker(storeId, com.github.tyke_bc.hht.network.PrintRequest(
+                                name = item.name,
+                                sku = item.sku,
+                                upc = item.upc ?: item.sku,
+                                department = item.department
+                            ))
                             toastOk = res.success; toast = res.message ?: if (res.success) "Label sent" else "Print failed"
                         } catch (e: Exception) { toastOk = false; toast = "Print error: ${e.message}" }
                     }
@@ -1783,7 +1788,6 @@ fun ChecklistScreen(storeId: String, checkType: String, title: String, items: Li
     }
 }
 
-@Composable
 // ---------- COOLER / FREEZER SAFETY CHECKS ----------
 // Reference: IMG_1559 — each fixture (Perishables Cooler, Freezer, Ice Cream, etc.) gets a
 // temperature entry with sign (+/-) and an OOS flag. Table highlights the currently-focused
@@ -1875,7 +1879,7 @@ fun SafetyWalkContent(storeId: String, checkType: String) {
                     if (next >= 0) focusIdx = next
                 }
             ) {
-                Icon(Icons.AutoMirrored.Filled.ArrowForward, null, tint = Color.White, modifier = Modifier.padding(8.dp))
+                Icon(Icons.Filled.ArrowForward, null, tint = Color.White, modifier = Modifier.padding(8.dp))
             }
         }
         // OOS toggle for the focused fixture (tap to mark out of service, which skips temp)
