@@ -1840,6 +1840,10 @@ fun SafetyWalkContent(storeId: String, checkType: String) {
 
         // Currently-focused fixture header
         val focused = state.getOrNull(focusIdx) ?: return@Column
+        // Local mirror for the temp input. Keyed on focusIdx so it resets when the user advances
+        // to a new fixture. Avoids a recompose-race where rapid keystrokes get dropped because
+        // onValueChange writes off a stale captured `focused`.
+        var tempInput by remember(focusIdx) { mutableStateOf(focused.temp) }
         Text(fixtures[focusIdx].first, fontSize = 15.sp, fontWeight = FontWeight.SemiBold, modifier = Modifier.padding(horizontal = 14.dp, vertical = 6.dp))
         HorizontalDivider(color = Color(0xFFE2E8F0))
 
@@ -1857,10 +1861,11 @@ fun SafetyWalkContent(storeId: String, checkType: String) {
         }
         Row(modifier = Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = 4.dp), verticalAlignment = Alignment.CenterVertically) {
             BasicTextField(
-                value = focused.temp,
+                value = tempInput,
                 onValueChange = { v ->
                     val clean = v.filter { c -> c.isDigit() || c == '.' }.take(5)
-                    state[focusIdx] = focused.copy(temp = clean)
+                    tempInput = clean
+                    state[focusIdx] = state[focusIdx].copy(temp = clean)
                 },
                 modifier = Modifier.width(72.dp).height(40.dp).border(1.5.dp, orange, RoundedCornerShape(4.dp)).padding(horizontal = 8.dp, vertical = 8.dp),
                 textStyle = TextStyle(fontSize = 16.sp, fontWeight = FontWeight.Bold, textAlign = TextAlign.Center),
@@ -1961,20 +1966,20 @@ fun SafetyWalkContent(storeId: String, checkType: String) {
                                 else signed < 32 || signed > 45
                             }.any { it }
                             val r = RetrofitClient.instance.submitCompliance(storeId,
-                                com.github.tyke_bc.hht.network.ComplianceRequest(checkType, null, details, !anyOutOfRange && dailyChecked, null, MainActivity.loggedInEid.ifBlank { null }))
+                                com.github.tyke_bc.hht.network.ComplianceRequest(checkType, null, details, !anyOutOfRange, null, MainActivity.loggedInEid.ifBlank { null }))
                             toastOk = r.success; toast = r.message ?: if (r.success) "Submitted" else "Failed"
                             if (r.success) { state.forEachIndexed { i, _ -> state[i] = FridgeFixtureState(positive = fixtures[i].second) }; focusIdx = 0; dailyChecked = false }
                         } catch (e: Exception) { toastOk = false; toast = e.message }
                         finally { submitting = false }
                     }
                 },
-                enabled = allEntered && dailyChecked && !submitting,
+                enabled = allEntered && !submitting,
                 shape = RoundedCornerShape(4.dp),
                 colors = ButtonDefaults.buttonColors(containerColor = orange, disabledContainerColor = Color(0xFFE2E8F0)),
                 modifier = Modifier.weight(1f)
             ) {
                 if (submitting) CircularProgressIndicator(modifier = Modifier.size(18.dp), strokeWidth = 2.dp, color = Color.White)
-                else Text("Done", color = if (allEntered && dailyChecked) Color.White else Color(0xFF94A3B8), fontWeight = FontWeight.Bold)
+                else Text("Done", color = if (allEntered) Color.White else Color(0xFF94A3B8), fontWeight = FontWeight.Bold)
             }
         }
         toast?.let {
