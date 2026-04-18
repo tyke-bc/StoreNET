@@ -49,10 +49,6 @@ fun ScanScreen(storeId: String, onBackToLauncher: () -> Unit) {
     var selectedAdjustmentsTab by remember { mutableIntStateOf(0) }
     val adjustmentsTabs = listOf("Damages", "Store Use", "Donations")
     
-    // Transfers Tabs
-    var selectedTransfersTab by remember { mutableIntStateOf(0) }
-    val transfersTabs = listOf("Outgoing", "Incoming", "Mis-Ship")
-    
     val tabs = listOf("Main", "Sales History", "Locations", "General")
 
     // Picking State
@@ -604,21 +600,6 @@ fun ScanScreen(storeId: String, onBackToLauncher: () -> Unit) {
                                 Spacer(modifier = Modifier.weight(3f))
                             }
                             CountsRecallsContent(countsUpcInput, { countsUpcInput = it })
-                        }
-                        "Transfers" -> {
-                            Row(modifier = Modifier.fillMaxWidth().background(Color(0xFFD6D6D6)).border(BorderStroke(1.dp, Color.Gray))) {
-                                transfersTabs.forEachIndexed { index, title ->
-                                    val isSelected = selectedTransfersTab == index
-                                    Box(modifier = Modifier.weight(1f).background(if (isSelected) Color(0xFFE8E8E8) else Color.Transparent).clickable { selectedTransfersTab = index }.padding(vertical = 12.dp), contentAlignment = Alignment.Center) {
-                                        Text(text = title, fontSize = 14.sp, color = if (isSelected) Color.Black else DGBlue)
-                                    }
-                                }
-                            }
-                            when (selectedTransfersTab) {
-                                0 -> TransfersOutgoingContent()
-                                1 -> TransfersIncomingContent()
-                                2 -> TransfersMisShipContent()
-                            }
                         }
                         "Order Picking" -> {
                             PickingContent(
@@ -1199,7 +1180,7 @@ storeId: String, upcInput: String, onUpcChange: (String) -> Unit, item: Inventor
                         val auth = RetrofitClient.instance.authLocal(storeId, com.github.tyke_bc.hht.network.AuthRequest(adjustEid, adjustPin))
                         if (auth.success && (auth.user?.role in listOf("LSA", "ASM", "SM"))) {
                             val priceToSave = item.regPrice ?: item.price
-                            if (showAdjustDialog && item != null && adjustQty.isNotEmpty()) {
+                            if (showAdjustDialog && adjustQty.isNotEmpty()) {
                                 // If editing pack size
                                 if (adjustQty.toIntOrNull() != null) {
                                     val res = RetrofitClient.instance.updatePackSize(storeId, com.github.tyke_bc.hht.network.UpdatePackSizeRequest(item.sku, adjustQty.toInt()))
