@@ -340,6 +340,20 @@ const storeContext = async (req, res, next) => {
                 INDEX idx_vdi_delivery (delivery_id)
             )`);
 
+            // Refrigeration units — inventory of coolers/freezers/ice-cream units the store owns.
+            // Populated and maintained via HHT "Refrigeration Maintenance" screen. `oos` flags a
+            // unit as out-of-service. `category` groups related units (e.g. "Ice Cream" in the ref).
+            await pool.query(`CREATE TABLE IF NOT EXISTS refrigeration_units (
+                id INT AUTO_INCREMENT PRIMARY KEY,
+                unit_number VARCHAR(50) NOT NULL,
+                description VARCHAR(100),
+                category VARCHAR(50),
+                oos TINYINT DEFAULT 0,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                INDEX idx_ru_category (category),
+                INDEX idx_ru_oos (oos)
+            )`);
+
             // Recurring task templates — nightly generator materializes tasks from these rules.
             // recurrence_type DAILY (runs every day), WEEKLY (uses day_of_week 0=Sun..6=Sat),
             // MONTHLY (uses day_of_month 1-31; if month has fewer days, clamps to last).
@@ -626,8 +640,9 @@ function cleanScannedCode(raw) {
     if (code.startsWith('QR')) code = code.substring(2);
     else if (code.startsWith('A')) code = code.substring(1);
 
-    // Strip DG warehouse label: 18 digits, starts with 0000, contains 12-digit UPC at positions 4-16
-    if (code.length === 18 && code.startsWith('0000') && /^\d+$/.test(code)) {
+    // Strip DG warehouse label: 18 digits, '0000' prefix, '00' suffix, 12-digit UPC at positions 4..15.
+    // The '00' suffix is what keeps this from false-matching a regular 18-char numeric code.
+    if (code.length === 18 && code.startsWith('0000') && code.endsWith('00') && /^\d+$/.test(code)) {
         code = code.substring(4, 16);
     }
 
@@ -2947,8 +2962,12 @@ app.post('/api/bopis/receive/:id', async (req, res) => {
 app.post('/api/inventory/stock/box', async (req, res) => {
     let { sku } = req.body;
     try {
-        if (sku.length === 18 && sku.startsWith("0000") && sku.endsWith("000")) sku = sku.substring(4, 15);
-        
+        // Defensive: if caller ever passes a raw warehouse label instead of a resolved SKU,
+        // extract the UPC. Matches the detection used on the HHT and in cleanScannedCode.
+        if (typeof sku === 'string' && sku.length === 18 && sku.startsWith('0000') && sku.endsWith('00') && /^\d+$/.test(sku)) {
+            sku = sku.substring(4, 16);
+        }
+
         const [inv] = await req.pool.query('SELECT sku, quantity_backstock, pack_size FROM inventory WHERE sku = ? OR upc = ?', [sku, sku]);
         if (inv.length === 0) return res.json({ success: false, message: 'Item not found.' });
         
@@ -5204,6 +5223,56 @@ app.post('/api/vendor-visits/:id/checkout', async (req, res) => {
         await req.pool.query(
             'UPDATE vendor_visits SET checked_out_at = CURRENT_TIMESTAMP, notes = ? WHERE id = ?',
             [mergedNotes, req.params.id]);
+        res.json({ success: true });
+    } catch (err) { res.status(500).json({ success: false, message: err.message }); }
+});
+
+// --- REFRIGERATION UNITS ---
+// CRUD over the store's refrigeration unit inventory. Drives the HHT "Refrigeration
+// Maintenance" screen (IMG_1565) where SMs log cooler/freezer/ice-cream units,
+// flip OOS, and remove decommissioned equipment.
+app.get('/api/refrigeration/units', async (req, res) => {
+    const category = req.query.category;
+    try {
+        const params = [];
+        let where = '';
+        if (category) { where = 'WHERE category = ?'; params.push(category); }
+        const [rows] = await req.pool.query(
+            `SELECT * FROM refrigeration_units ${where} ORDER BY oos ASC, unit_number ASC`, params);
+        res.json({ success: true, units: rows });
+    } catch (err) { res.status(500).json({ success: false, message: err.message }); }
+});
+
+app.post('/api/refrigeration/units', async (req, res) => {
+    const { unit_number, description, category } = req.body || {};
+    if (!unit_number) return res.status(400).json({ success: false, message: 'unit_number required.' });
+    try {
+        const [r] = await req.pool.query(
+            'INSERT INTO refrigeration_units (unit_number, description, category) VALUES (?, ?, ?)',
+            [unit_number, description || null, category || null]);
+        res.json({ success: true, id: r.insertId });
+    } catch (err) { res.status(500).json({ success: false, message: err.message }); }
+});
+
+app.put('/api/refrigeration/units/:id', async (req, res) => {
+    const { unit_number, description, category, oos } = req.body || {};
+    try {
+        await req.pool.query(
+            `UPDATE refrigeration_units SET
+                unit_number = COALESCE(?, unit_number),
+                description = COALESCE(?, description),
+                category = COALESCE(?, category),
+                oos = COALESCE(?, oos)
+             WHERE id = ?`,
+            [unit_number || null, description || null, category || null,
+             oos == null ? null : (oos ? 1 : 0), req.params.id]);
+        res.json({ success: true });
+    } catch (err) { res.status(500).json({ success: false, message: err.message }); }
+});
+
+app.delete('/api/refrigeration/units/:id', async (req, res) => {
+    try {
+        await req.pool.query('DELETE FROM refrigeration_units WHERE id = ?', [req.params.id]);
         res.json({ success: true });
     } catch (err) { res.status(500).json({ success: false, message: err.message }); }
 });

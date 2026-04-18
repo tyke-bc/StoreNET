@@ -4,5 +4,8 @@
 - [Vendors / DSD / DG Respond](project_vendors_dsd.md) — vendor master data + /respond tablet app + HHT vendor deliveries, shipped 2026-04-16
 - [Session continuity expectation](feedback_session_continuity.md) — user expects memory to carry across sessions; save proactively, check before asking
 - [Deployment topology](reference_deployment.md) — server runs on separate Linux box (SSH'd from Windows dev); printer is USB to Linux host, CUPS queue HP4155
+- [Dashboard URL](reference_dashboard_url.md) — backoffice runs at http://192.168.0.192:3000; user logs in manually each session
 - [Express route-order gotcha](feedback_express_route_order.md) — specific static routes must be registered before `:id` wildcards or they get shadowed and silently no-op
+- [storeContext bypass prefixes](feedback_storecontext_bypass.md) — certain /api paths skip storeContext so req.pool is undefined; resolve the pool manually from X-Store-ID
 - [Extensions 2026-04-17](project_extensions_2026_04_17.md) — BOPIS short-pick reasons, POG reset history/HHT card, vendor visits check-in log, recurring tasks generator
+- [HHT reference-matching redesign](project_hht_reference_redesign.md) — Adjustments, Compliance, Cooler/Freezer Safety, Refrigeration Maintenance rebuilt to match real DG UHHT photos; new refrigeration_units table

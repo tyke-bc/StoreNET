@@ -1,5 +1,6 @@
 package com.github.tyke_bc.hht
 
+import android.util.Log
 import kotlinx.coroutines.launch
 import com.github.tyke_bc.hht.network.RetrofitClient
 import com.github.tyke_bc.hht.network.InventoryItem
@@ -167,10 +168,8 @@ fun ScanScreen(storeId: String, onBackToLauncher: () -> Unit) {
     }
 
     // Dialog States for Smart Scans
-    var showReceivingDialog by remember { mutableStateOf(false) }
     var showStockingDialog by remember { mutableStateOf(false) }
     var showRTStockingDialog by remember { mutableStateOf(false) }
-    var detectedManifestId by remember { mutableIntStateOf(0) }
     var detectedRTBarcode by remember { mutableStateOf("") }
     var detectedSku by remember { mutableStateOf("") }
     var detectedPackSize by remember { mutableIntStateOf(1) }
@@ -203,6 +202,7 @@ fun ScanScreen(storeId: String, onBackToLauncher: () -> Unit) {
     LaunchedEffect(Unit) {
         MainActivity.scanEvents.collect { scannedData ->
             val input = scannedData.trim()
+            Log.d("WH", "scan received: len=${input.length} raw='$scannedData' trimmed='$input' screen=$selectedScreen")
 
             // Section barcodes can be scanned from any screen
             if (input.startsWith("CYCL_")) {
@@ -266,46 +266,51 @@ fun ScanScreen(storeId: String, onBackToLauncher: () -> Unit) {
                     detectedRTBarcode = input
                     showRTStockingDialog = true
                 } else {
-                    // Check if it's a warehouse label (18 digits, starts with 0000, UPC at positions 4-16)
+                    // Warehouse label: 18 digits, '0000' prefix, '00' suffix, UPC at positions 4..15.
+                    // The trailing '00' is what separates a warehouse label from a regular UPC that
+                    // happens to start with 0 — regular UPCs are 12 digits, not 18, and our six
+                    // sample labels all end in '00'. Keep both length and suffix checks.
                     var cleanedScan = input
                     var isWarehouseLabel = false
+                    // Reverted: dropped endsWith("00") — it rejected valid labels when the embedded UPC
+                    // wasn't exactly 12 digits. length+prefix+all-digits is enough disambiguation
+                    // because regular UPCs are 12 digits, not 18.
                     if (input.length == 18 && input.startsWith("0000") && input.all { it.isDigit() }) {
                         cleanedScan = input.substring(4, 16)
                         isWarehouseLabel = true
                     }
-                    
+                    Log.d("WH", "home-dispatch: isWarehouseLabel=$isWarehouseLabel cleanedScan='$cleanedScan'")
+
                     // Always perform the search first to show the item
                     performSearch(cleanedScan)
 
-                    // If it was a warehouse label, check for manifest or backstock
+                    // Warehouse label always means "stock a box from backstock to floor" — never receive.
+                    // The Receiving tab handles truck-delivery receiving separately; one warehouse sticker
+                    // wouldn't make sense as a receive signal anyway (you'd have 13 rolltainers of them).
                     if (isWarehouseLabel) {
                         coroutineScope.launch {
                             try {
-                                // Resolve the actual SKU via inventory lookup
                                 val invRes = RetrofitClient.instance.getInventoryItem(storeId, cleanedScan)
+                                Log.d("WH", "lookup: success=${invRes.success} item=${invRes.item?.sku} backstock=${invRes.item?.quantityBackstock}")
                                 if (!invRes.success || invRes.item == null) {
-                                    errorMessage = "WH: item not found for $cleanedScan"
+                                    stockingStatusMessage = "WH: item not found for $cleanedScan"
                                     return@launch
                                 }
                                 val resolvedSku = invRes.item.sku
-
-                                val manifests = RetrofitClient.instance.getManifests(storeId)
-                                val pendingTrk = manifests.find { it.status != "COMPLETED" }
-                                if (pendingTrk != null) {
-                                    detectedManifestId = pendingTrk.id
+                                val bs = invRes.item.quantityBackstock ?: 0
+                                if (bs > 0) {
+                                    Log.d("WH", "→ STOCKING dialog (sku=$resolvedSku bs=$bs pack=${invRes.item.packSize})")
                                     detectedSku = resolvedSku
-                                    showReceivingDialog = true
+                                    detectedPackSize = invRes.item.packSize ?: 1
+                                    showStockingDialog = true
                                 } else {
-                                    val bs = invRes.item.quantityBackstock ?: 0
-                                    if (bs > 0) {
-                                        detectedSku = resolvedSku
-                                        detectedPackSize = invRes.item.packSize ?: 1
-                                        showStockingDialog = true
-                                    } else {
-                                        errorMessage = "WH: $resolvedSku backstock=$bs, no action"
-                                    }
+                                    Log.d("WH", "→ no action (sku=$resolvedSku bs=$bs)")
+                                    stockingStatusMessage = "WH: $resolvedSku has no backstock"
                                 }
-                            } catch (e: Exception) { errorMessage = "WH error: ${e.message}" }
+                            } catch (e: Exception) {
+                                Log.e("WH", "exception", e)
+                                stockingStatusMessage = "WH error: ${e.message}"
+                            }
                         }
                     }
                 }
@@ -361,7 +366,7 @@ fun ScanScreen(storeId: String, onBackToLauncher: () -> Unit) {
             isTruckLoading = true
             truckError = null
             try {
-                manifestList = RetrofitClient.instance.getManifests(storeId)
+                manifestList = RetrofitClient.instance.getManifests(storeId).rows
             } catch (e: Exception) {
                 truckError = "Failed to load manifests: ${e.message}"
             } finally { isTruckLoading = false }
@@ -441,6 +446,20 @@ fun ScanScreen(storeId: String, onBackToLauncher: () -> Unit) {
 
                     when (selectedScreen) {
                         "Home" -> {
+                            // Warehouse-scan status banner — shows diagnostic + no-action outcomes that
+                            // previously failed silently (item not found, no backstock, etc.). Tap to dismiss.
+                            if (stockingStatusMessage != null) {
+                                LaunchedEffect(stockingStatusMessage) {
+                                    kotlinx.coroutines.delay(6000)
+                                    stockingStatusMessage = null
+                                }
+                                Surface(
+                                    color = Color(0xFFFEF3C7),
+                                    modifier = Modifier.fillMaxWidth().clickable { stockingStatusMessage = null }
+                                ) {
+                                    Text(stockingStatusMessage ?: "", modifier = Modifier.padding(12.dp), color = Color(0xFF92400E), fontWeight = FontWeight.SemiBold, fontSize = 13.sp)
+                                }
+                            }
                             // Open-task banner: surfaced on Home so employees see new work without hunting for it.
                             val openTasks = tasksList.filter { it.status == "OPEN" }
                             if (openTasks.isNotEmpty()) {
@@ -530,8 +549,11 @@ fun ScanScreen(storeId: String, onBackToLauncher: () -> Unit) {
                                     }
                                 }
                             }
-                            if (selectedAdjustmentsTab == 0) AdjustmentsDamagesContent(adjustmentUpcInput, { adjustmentUpcInput = it })
-                            else AdjustmentsStoreUseContent(adjustmentUpcInput, { adjustmentUpcInput = it })
+                            when (selectedAdjustmentsTab) {
+                                0 -> AdjustmentsDamagesContent(adjustmentUpcInput, { adjustmentUpcInput = it })
+                                1 -> AdjustmentsStoreUseContent(adjustmentUpcInput, { adjustmentUpcInput = it })
+                                2 -> AdjustmentsDonationsContent(adjustmentUpcInput, { adjustmentUpcInput = it })
+                            }
                         }
                         "Receiving" -> {
                             ReceivingBOLContent(
@@ -901,19 +923,6 @@ fun ScanScreen(storeId: String, onBackToLauncher: () -> Unit) {
             )
         }
 
-        if (showReceivingDialog) {
-            AlertDialog(onDismissRequest = { showReceivingDialog = false }, title = { Text("Truck Manifest Detected") }, text = { Text("SKU ${detectedSku} is pending on a manifest. Receive 1 Box to Backstock?") }, confirmButton = {
-                Button(onClick = {
-                    coroutineScope.launch {
-                        try {
-                            val res = RetrofitClient.instance.receiveItem(storeId, detectedManifestId, com.github.tyke_bc.hht.network.PickRequest(detectedSku))
-                            if (res.success) { showReceivingDialog = false; performSearch(detectedSku) }
-                        } catch (e: Exception) { /* ignore */ }
-                    }
-                }) { Text("RECEIVE") }
-            }, dismissButton = { Button(onClick = { showReceivingDialog = false }) { Text("CANCEL") } })
-        }
-
         if (showStockingDialog) {
             AlertDialog(onDismissRequest = { showStockingDialog = false }, title = { Text("Item in Backstock") }, text = { Text("Stock 1 Box (+${detectedPackSize} units) to Live Inventory?") }, confirmButton = {
                 Button(onClick = {
@@ -1029,7 +1038,7 @@ fun ReceivingBOLContent(
     LaunchedEffect(Unit) {
         isLoading = true
         try {
-            manifestList = RetrofitClient.instance.getManifests(storeId).filter { it.status != "COMPLETED" }
+            manifestList = RetrofitClient.instance.getManifests(storeId).rows.filter { it.status != "COMPLETED" }
         } catch (e: Exception) { /* ignore */ }
         finally { isLoading = false }
     }
@@ -1082,13 +1091,13 @@ fun ReceivingBOLContent(
         } else if (manifestList.isEmpty()) {
             Text("No pending shipments found.", color = Color.Gray)
         } else {
+            // Informational only — tap-to-master-receive was removed because a single tap to mark
+                        // a whole truck received (with no confirm / no undo) was too easy to trigger by mistake.
+                        // Use the Truck Deliveries tab to scan items in properly, or type/scan a BOL above.
             Column(modifier = Modifier.weight(1f).verticalScroll(rememberScrollState())) {
                 manifestList.forEach { m ->
                     Surface(
-                        modifier = Modifier.fillMaxWidth().padding(bottom = 8.dp).clickable { 
-                            if (!m.bolNumber.isNullOrEmpty()) onMasterReceiveBol(m.bolNumber)
-                            else onMasterReceiveId(m.id)
-                        },
+                        modifier = Modifier.fillMaxWidth().padding(bottom = 8.dp),
                         color = Color.White, shape = RoundedCornerShape(8.dp), border = BorderStroke(1.dp, Color.Gray)
                     ) {
                         Row(modifier = Modifier.padding(16.dp), verticalAlignment = Alignment.CenterVertically) {
@@ -1334,21 +1343,22 @@ fun AdjustmentForm(
     scannedUpc: String,
     onScannedUpcChange: (String) -> Unit,
     adjustmentType: String,
-    reasonCodes: List<String>,
+    // Reason codes as (display label, stored code) pairs. Empty list = no reason picker shown
+    // (used by Store Use / Donations, which auto-imply their reason from the tab).
+    reasonCodes: List<Pair<String, String>>,
     headerLabel: String,
     headerColor: Color
 ) {
     var currentItem by remember { mutableStateOf<InventoryItem?>(null) }
     var lookupErr by remember { mutableStateOf<String?>(null) }
-    var quantity by remember { mutableStateOf("1") }
-    var reason by remember { mutableStateOf(reasonCodes.firstOrNull() ?: "") }
-    var notes by remember { mutableStateOf("") }
+    var quantity by remember { mutableStateOf("") }
+    var reason by remember { mutableStateOf<Pair<String, String>?>(null) }
+    var showReasonDialog by remember { mutableStateOf(false) }
     var submitting by remember { mutableStateOf(false) }
     var toast by remember { mutableStateOf<String?>(null) }
     var toastOk by remember { mutableStateOf(true) }
     val scope = rememberCoroutineScope()
 
-    // Look up item when the UPC/SKU changes (debounce-ish: just on each change)
     LaunchedEffect(scannedUpc) {
         if (scannedUpc.isBlank()) { currentItem = null; lookupErr = null; return@LaunchedEffect }
         try {
@@ -1358,115 +1368,181 @@ fun AdjustmentForm(
         } catch (e: Exception) { currentItem = null; lookupErr = e.message }
     }
 
-    Column(modifier = Modifier.fillMaxSize().padding(16.dp).verticalScroll(rememberScrollState())) {
-        Surface(color = headerColor, shape = RoundedCornerShape(4.dp)) {
-            Text(headerLabel, color = Color.White, fontWeight = FontWeight.Bold, fontSize = 14.sp, modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp))
-        }
-        Spacer(Modifier.height(10.dp))
-
-        Text("UPC / SKU", fontWeight = FontWeight.SemiBold, fontSize = 12.sp)
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            BasicTextField(
-                value = scannedUpc, onValueChange = onScannedUpcChange,
-                modifier = Modifier.weight(1f).height(40.dp).border(1.dp, Color.Gray).padding(8.dp),
-                textStyle = TextStyle(fontSize = 14.sp)
-            )
-            Spacer(Modifier.width(8.dp)); BarcodePlaceholder()
-        }
-        Spacer(Modifier.height(10.dp))
-
-        if (lookupErr != null) {
-            Text("⚠ $lookupErr", color = Color(0xFFEF4444), fontSize = 12.sp, modifier = Modifier.padding(vertical = 4.dp))
-        }
-        currentItem?.let { item ->
-            Surface(color = Color(0xFFF8FAFC), border = BorderStroke(1.dp, Color(0xFFE2E8F0)), shape = RoundedCornerShape(4.dp)) {
-                Column(Modifier.padding(10.dp)) {
-                    Text(item.name, fontWeight = FontWeight.Bold, fontSize = 14.sp)
-                    Text("SKU ${item.sku}  ·  ${item.department}", fontSize = 11.sp, color = Color(0xFF64748B))
-                    Text("Current OH: ${item.quantity}   Regular Price: $%.2f".format(item.price), fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
-                    item.location?.let { Text("Location: $it  ${item.faces ?: ""}", fontSize = 11.sp, color = Color(0xFF64748B)) }
-                }
-            }
-            Spacer(Modifier.height(10.dp))
-        }
-
-        Text("Reason Code", fontWeight = FontWeight.SemiBold, fontSize = 12.sp)
-        Row(modifier = Modifier.horizontalScroll(rememberScrollState()).padding(vertical = 4.dp)) {
-            reasonCodes.forEach { code ->
-                val selected = reason == code
-                Surface(
-                    color = if (selected) headerColor else Color(0xFFE2E8F0),
-                    shape = RoundedCornerShape(4.dp),
-                    modifier = Modifier.padding(end = 6.dp).clickable { reason = code }
-                ) {
-                    Text(code, color = if (selected) Color.White else Color(0xFF334155), fontSize = 12.sp, fontWeight = FontWeight.SemiBold, modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp))
-                }
-            }
-        }
-        Spacer(Modifier.height(10.dp))
-
-        Text("Adjustment Quantity", fontWeight = FontWeight.SemiBold, fontSize = 12.sp)
-        BasicTextField(
-            value = quantity, onValueChange = { quantity = it.filter { c -> c.isDigit() } },
-            modifier = Modifier.width(100.dp).height(40.dp).border(1.dp, Color.Gray).padding(8.dp),
-            textStyle = TextStyle(fontSize = 16.sp, fontWeight = FontWeight.Bold),
-            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number)
-        )
-        Spacer(Modifier.height(10.dp))
-
-        Text("Notes (optional)", fontWeight = FontWeight.SemiBold, fontSize = 12.sp)
-        BasicTextField(
-            value = notes, onValueChange = { notes = it },
-            modifier = Modifier.fillMaxWidth().height(60.dp).border(1.dp, Color.Gray).padding(8.dp),
-            textStyle = TextStyle(fontSize = 13.sp)
-        )
-        Spacer(Modifier.height(14.dp))
-
-        Button(
-            onClick = {
-                val qty = quantity.toIntOrNull() ?: 0
-                val sku = currentItem?.sku ?: scannedUpc.trim()
-                if (currentItem == null) { toast = "Scan or enter a valid UPC/SKU first"; toastOk = false; return@Button }
-                if (qty <= 0) { toast = "Enter a positive quantity"; toastOk = false; return@Button }
-                if (reason.isBlank()) { toast = "Select a reason code"; toastOk = false; return@Button }
-                submitting = true
-                scope.launch {
-                    try {
-                        val res = RetrofitClient.instance.submitAdjustment(
-                            storeId,
-                            com.github.tyke_bc.hht.network.AdjustmentRequest(
-                                sku = sku, adjustmentType = adjustmentType, quantity = qty,
-                                reasonCode = reason, notes = notes.ifBlank { null },
-                                eid = MainActivity.loggedInEid.ifBlank { null }
-                            )
-                        )
-                        toastOk = res.success
-                        toast = res.message ?: if (res.success) "Adjusted" else "Failed"
-                        if (res.success) {
-                            // Refresh local item display
-                            try {
-                                val r = RetrofitClient.instance.getInventoryItem(storeId, sku)
-                                if (r.success) currentItem = r.item
-                            } catch (_: Exception) {}
-                            quantity = "1"; notes = ""
+    // Reference-matching reason code modal (IMG_1547): dark-overlay list of options with
+    // radio indicators, top entry "Tap to select" clears the choice.
+    if (showReasonDialog) {
+        AlertDialog(
+            onDismissRequest = { showReasonDialog = false },
+            confirmButton = {},
+            title = null,
+            text = {
+                Column {
+                    val rows = listOf(("Tap to select" to "")) + reasonCodes
+                    rows.forEach { (label, code) ->
+                        Row(
+                            modifier = Modifier.fillMaxWidth().clickable {
+                                reason = if (code.isBlank()) null else (label to code)
+                                showReasonDialog = false
+                            }.padding(vertical = 14.dp, horizontal = 8.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.SpaceBetween
+                        ) {
+                            Text(label, fontSize = 15.sp, fontWeight = if (code.isBlank()) FontWeight.SemiBold else FontWeight.Normal)
+                            val selected = (reason?.second ?: "") == code && (code.isNotBlank() || reason == null)
+                            Surface(
+                                shape = RoundedCornerShape(50),
+                                color = Color.Transparent,
+                                border = BorderStroke(1.5.dp, if (selected) Color(0xFFF59E0B) else Color(0xFF94A3B8)),
+                                modifier = Modifier.size(20.dp)
+                            ) {
+                                if (selected) Box(Modifier.padding(3.dp).background(Color(0xFFF59E0B), RoundedCornerShape(50)))
+                            }
                         }
-                    } catch (e: Exception) { toastOk = false; toast = "Error: ${e.message}" }
-                    finally { submitting = false }
+                        HorizontalDivider(color = Color(0xFFE2E8F0))
+                    }
                 }
             },
-            enabled = !submitting,
-            colors = ButtonDefaults.buttonColors(containerColor = headerColor),
-            modifier = Modifier.fillMaxWidth()
-        ) {
-            if (submitting) CircularProgressIndicator(modifier = Modifier.size(18.dp), strokeWidth = 2.dp, color = Color.White)
-            else Text("SUBMIT ADJUSTMENT", fontWeight = FontWeight.Bold)
+            containerColor = Color.White
+        )
+    }
+
+    Column(modifier = Modifier.fillMaxSize().padding(horizontal = 14.dp, vertical = 12.dp).verticalScroll(rememberScrollState())) {
+        // UPC input row with barcode icon to the right
+        Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(bottom = 14.dp)) {
+            val placeholderShown = scannedUpc.isBlank()
+            Box(modifier = Modifier.weight(1f).height(40.dp).border(1.dp, Color(0xFF94A3B8), RoundedCornerShape(4.dp)).padding(horizontal = 8.dp), contentAlignment = Alignment.CenterStart) {
+                if (placeholderShown) Text("Scan or Enter UPC", color = Color(0xFF94A3B8), fontSize = 14.sp)
+                BasicTextField(
+                    value = scannedUpc,
+                    onValueChange = onScannedUpcChange,
+                    textStyle = TextStyle(fontSize = 14.sp, color = Color(0xFFDC2626)),
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth()
+                )
+            }
+            Spacer(Modifier.width(8.dp)); BarcodePlaceholder()
         }
+
+        if (lookupErr != null && scannedUpc.isNotBlank()) {
+            Text("⚠ $lookupErr", color = Color(0xFFEF4444), fontSize = 12.sp, modifier = Modifier.padding(bottom = 8.dp))
+        }
+
+        // Label : value rows (reference layout — labels left, values right-aligned).
+        AdjLabelRow("Desc:", currentItem?.name ?: "", valueColor = Color(0xFF1E3A8A))
+        AdjLabelRow("Regular Price:", currentItem?.let { "$%.2f".format(it.price) } ?: "")
+        AdjLabelRow("Location:", currentItem?.location ?: "")
+
+        if (reasonCodes.isNotEmpty()) {
+            Row(modifier = Modifier.fillMaxWidth().padding(vertical = 6.dp), verticalAlignment = Alignment.CenterVertically) {
+                Text("Reason Code:", modifier = Modifier.width(120.dp), fontSize = 14.sp, fontWeight = FontWeight.SemiBold)
+                Surface(
+                    modifier = Modifier.weight(1f).clickable { showReasonDialog = true },
+                    color = Color(0xFFE2E8F0),
+                    shape = RoundedCornerShape(4.dp),
+                    border = BorderStroke(1.dp, Color(0xFF94A3B8))
+                ) {
+                    Row(modifier = Modifier.padding(horizontal = 10.dp, vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) {
+                        Text(reason?.first ?: "Tap to select", modifier = Modifier.weight(1f), fontSize = 14.sp, color = if (reason == null) Color(0xFF64748B) else Color.Black)
+                        Icon(Icons.Default.ArrowDropDown, null, tint = Color(0xFF64748B))
+                    }
+                }
+            }
+        }
+
+        AdjLabelRow("Current OH:", currentItem?.quantity?.toString() ?: "")
+
+        Row(modifier = Modifier.fillMaxWidth().padding(vertical = 6.dp), verticalAlignment = Alignment.CenterVertically) {
+            Text("Adjustment\nQuantity:", modifier = Modifier.width(120.dp), fontSize = 14.sp, fontWeight = FontWeight.SemiBold)
+            BasicTextField(
+                value = quantity, onValueChange = { quantity = it.filter { c -> c.isDigit() } },
+                modifier = Modifier.weight(1f).height(40.dp).border(1.dp, Color(0xFF94A3B8), RoundedCornerShape(4.dp)).padding(horizontal = 10.dp, vertical = 8.dp),
+                textStyle = TextStyle(fontSize = 16.sp, fontWeight = FontWeight.Bold),
+                singleLine = true,
+                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number)
+            )
+        }
+
+        Spacer(Modifier.height(18.dp))
+
+        Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+            OutlinedButton(
+                onClick = {
+                    val sku = currentItem?.sku
+                    if (sku == null) { toast = "Scan or enter a valid UPC/SKU first"; toastOk = false; return@OutlinedButton }
+                    scope.launch {
+                        try {
+                            val res = RetrofitClient.instance.printSticker(storeId, com.github.tyke_bc.hht.network.PrintRequest(sku))
+                            toastOk = res.success; toast = res.message ?: if (res.success) "Label sent" else "Print failed"
+                        } catch (e: Exception) { toastOk = false; toast = "Print error: ${e.message}" }
+                    }
+                },
+                shape = RoundedCornerShape(4.dp),
+                border = BorderStroke(1.dp, Color(0xFF64748B)),
+                contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 12.dp, vertical = 10.dp)
+            ) { Text("Print\nLabel", color = Color.Black, fontSize = 12.sp, textAlign = TextAlign.Center) }
+
+            Button(
+                onClick = {
+                    val qty = quantity.toIntOrNull() ?: 0
+                    val sku = currentItem?.sku ?: scannedUpc.trim()
+                    if (currentItem == null) { toast = "Scan or enter a valid UPC/SKU first"; toastOk = false; return@Button }
+                    if (qty <= 0) { toast = "Enter a positive quantity"; toastOk = false; return@Button }
+                    val resolvedReason = reason?.second ?: when (adjustmentType) {
+                        "STORE_USE" -> "STORE_USE"
+                        "DONATION" -> "DONATION"
+                        else -> ""
+                    }
+                    if (reasonCodes.isNotEmpty() && resolvedReason.isBlank()) { toast = "Select a reason code"; toastOk = false; return@Button }
+                    submitting = true
+                    scope.launch {
+                        try {
+                            val res = RetrofitClient.instance.submitAdjustment(
+                                storeId,
+                                com.github.tyke_bc.hht.network.AdjustmentRequest(
+                                    sku = sku, adjustmentType = adjustmentType, quantity = qty,
+                                    reasonCode = resolvedReason, notes = null,
+                                    eid = MainActivity.loggedInEid.ifBlank { null }
+                                )
+                            )
+                            toastOk = res.success
+                            toast = res.message ?: if (res.success) "Adjusted" else "Failed"
+                            if (res.success) {
+                                try {
+                                    val r = RetrofitClient.instance.getInventoryItem(storeId, sku)
+                                    if (r.success) currentItem = r.item
+                                } catch (_: Exception) {}
+                                quantity = ""; reason = null
+                            }
+                        } catch (e: Exception) { toastOk = false; toast = "Error: ${e.message}" }
+                        finally { submitting = false }
+                    }
+                },
+                enabled = !submitting,
+                shape = RoundedCornerShape(4.dp),
+                colors = ButtonDefaults.buttonColors(containerColor = headerColor),
+                modifier = Modifier.weight(1f)
+            ) {
+                if (submitting) CircularProgressIndicator(modifier = Modifier.size(18.dp), strokeWidth = 2.dp, color = Color.White)
+                else Text("SUBMIT", fontWeight = FontWeight.Bold)
+            }
+        }
+
         toast?.let {
             Spacer(Modifier.height(10.dp))
             Surface(color = if (toastOk) Color(0xFFECFDF5) else Color(0xFFFEF2F2), border = BorderStroke(1.dp, if (toastOk) Color(0xFF10B981) else Color(0xFFEF4444)), shape = RoundedCornerShape(4.dp)) {
                 Text(it, color = if (toastOk) Color(0xFF047857) else Color(0xFF991B1B), fontSize = 13.sp, modifier = Modifier.padding(10.dp))
             }
         }
+    }
+}
+
+// Standard label:value row shared by Adjustments form fields — label left-aligned fixed width,
+// value blue (to mimic the DG handheld's blue emphasis on data values).
+@Composable
+private fun AdjLabelRow(label: String, value: String, valueColor: Color = Color.Black) {
+    Row(modifier = Modifier.fillMaxWidth().padding(vertical = 6.dp), verticalAlignment = Alignment.Top) {
+        Text(label, modifier = Modifier.width(120.dp), fontSize = 14.sp, fontWeight = FontWeight.SemiBold)
+        Text(value, modifier = Modifier.weight(1f), fontSize = 14.sp, color = if (value.isBlank()) Color(0xFF94A3B8) else valueColor)
     }
 }
 
@@ -1727,93 +1803,533 @@ fun ChecklistScreen(storeId: String, checkType: String, title: String, items: Li
 }
 
 @Composable
+// ---------- COOLER / FREEZER SAFETY CHECKS ----------
+// Reference: IMG_1559 — each fixture (Perishables Cooler, Freezer, Ice Cream, etc.) gets a
+// temperature entry with sign (+/-) and an OOS flag. Table highlights the currently-focused
+// row in red. Bottom: Daily Safety Check confirmation + Complete Later / Done.
+private data class FridgeFixtureState(
+    var temp: String = "",
+    var positive: Boolean = true, // Temperature sign — freezers usually negative, coolers positive
+    var oos: Boolean = false
+)
+
+@Composable
 fun SafetyWalkContent(storeId: String, checkType: String) {
-    ChecklistScreen(storeId, checkType, "COOLER / FREEZER / SAFETY WALK", listOf(
-        "Cooler doors close and seal",
-        "Freezer case temps within range",
-        "No ice buildup on evaporators",
-        "Aisles clear of trip hazards",
-        "Spill kit present and stocked",
-        "Back-room floor dry",
-        "Emergency exits unblocked",
-        "Ladder stored safely"
-    ), Color(0xFFFBC02D))
+    // Standard DG fixture list — cooler vs freezer determines the default temp sign.
+    val fixtures = remember {
+        listOf(
+            "Perishables Cooler" to true,
+            "Freezer" to false,
+            "Freezer" to false,
+            "Ice Cream" to false
+        )
+    }
+    val state = remember {
+        androidx.compose.runtime.snapshots.SnapshotStateList<FridgeFixtureState>().apply {
+            fixtures.forEach { add(FridgeFixtureState(positive = it.second)) }
+        }
+    }
+    var focusIdx by remember { mutableIntStateOf(0) }
+    var dailyChecked by remember { mutableStateOf(false) }
+    var submitting by remember { mutableStateOf(false) }
+    var toast by remember { mutableStateOf<String?>(null) }
+    var toastOk by remember { mutableStateOf(true) }
+    val scope = rememberCoroutineScope()
+    val orange = Color(0xFFFF6F00)
+    val red = Color(0xFFDC2626)
+
+    val allEntered = state.all { it.temp.isNotBlank() || it.oos }
+
+    Column(modifier = Modifier.fillMaxSize().background(Color.White)) {
+        // Orange icon-badge title bar (ref IMG_1559 top).
+        Row(
+            modifier = Modifier.fillMaxWidth().background(brush = Brush.verticalGradient(colors = listOf(Color(0xFFFFF4D9), Color.White))).padding(horizontal = 10.dp, vertical = 8.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Surface(color = orange, shape = RoundedCornerShape(6.dp)) {
+                Icon(Icons.Default.CheckBox, null, tint = Color.White, modifier = Modifier.padding(6.dp).size(24.dp))
+            }
+            Spacer(Modifier.width(10.dp))
+            Text("Cooler / Freezer Safety Checks", fontWeight = FontWeight.Bold, fontSize = 16.sp)
+        }
+
+        // Currently-focused fixture header
+        val focused = state.getOrNull(focusIdx) ?: return@Column
+        Text(fixtures[focusIdx].first, fontSize = 15.sp, fontWeight = FontWeight.SemiBold, modifier = Modifier.padding(horizontal = 14.dp, vertical = 6.dp))
+        HorizontalDivider(color = Color(0xFFE2E8F0))
+
+        // Temperature entry row with +/- radios and advance-arrow
+        Row(modifier = Modifier.fillMaxWidth().padding(14.dp), verticalAlignment = Alignment.CenterVertically) {
+            Text("Temperature:", modifier = Modifier.weight(1f), fontSize = 14.sp)
+            Spacer(Modifier.width(6.dp))
+            ComplianceRadio(label = "(+)", selected = focused.positive, color = Color(0xFF2563EB)) {
+                state[focusIdx] = focused.copy(positive = true)
+            }
+            Spacer(Modifier.width(6.dp))
+            ComplianceRadio(label = "(−)", selected = !focused.positive, color = Color(0xFF2563EB)) {
+                state[focusIdx] = focused.copy(positive = false)
+            }
+        }
+        Row(modifier = Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = 4.dp), verticalAlignment = Alignment.CenterVertically) {
+            BasicTextField(
+                value = focused.temp,
+                onValueChange = { v ->
+                    val clean = v.filter { c -> c.isDigit() || c == '.' }.take(5)
+                    state[focusIdx] = focused.copy(temp = clean)
+                },
+                modifier = Modifier.width(72.dp).height(40.dp).border(1.5.dp, orange, RoundedCornerShape(4.dp)).padding(horizontal = 8.dp, vertical = 8.dp),
+                textStyle = TextStyle(fontSize = 16.sp, fontWeight = FontWeight.Bold, textAlign = TextAlign.Center),
+                singleLine = true,
+                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number)
+            )
+            Spacer(Modifier.width(6.dp))
+            Text("°F", fontSize = 12.sp, color = Color(0xFF64748B))
+            Spacer(Modifier.weight(1f))
+            // Advance arrow — commits current temp and moves to next un-filled fixture
+            Surface(
+                color = if (focused.temp.isNotBlank() || focused.oos) orange else Color(0xFFE2E8F0),
+                shape = RoundedCornerShape(4.dp),
+                modifier = Modifier.clickable(enabled = focused.temp.isNotBlank() || focused.oos) {
+                    val next = state.indexOfFirst { it.temp.isBlank() && !it.oos }
+                    if (next >= 0) focusIdx = next
+                }
+            ) {
+                Icon(Icons.AutoMirrored.Filled.ArrowForward, null, tint = Color.White, modifier = Modifier.padding(8.dp))
+            }
+        }
+        // OOS toggle for the focused fixture (tap to mark out of service, which skips temp)
+        Row(modifier = Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = 2.dp), verticalAlignment = Alignment.CenterVertically) {
+            ComplianceRadio(label = "Out of service (skip temp)", selected = focused.oos, color = red) {
+                state[focusIdx] = focused.copy(oos = !focused.oos, temp = if (!focused.oos) "" else focused.temp)
+            }
+        }
+
+        Spacer(Modifier.height(8.dp))
+
+        // Fixture table
+        Row(modifier = Modifier.fillMaxWidth().background(Color(0xFFF1F5F9)).padding(horizontal = 14.dp, vertical = 8.dp)) {
+            Text("Freezer/Cooler", modifier = Modifier.weight(1f), fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
+            Text("Temp", modifier = Modifier.width(60.dp), fontSize = 12.sp, fontWeight = FontWeight.SemiBold, textAlign = TextAlign.End)
+            Text("OOS", modifier = Modifier.width(48.dp), fontSize = 12.sp, fontWeight = FontWeight.SemiBold, textAlign = TextAlign.End)
+        }
+        Column(modifier = Modifier.weight(1f, fill = false).verticalScroll(rememberScrollState())) {
+            fixtures.forEachIndexed { idx, (name, _) ->
+                val s = state[idx]
+                val isFocused = idx == focusIdx
+                Surface(
+                    color = if (isFocused) red else Color.White,
+                    modifier = Modifier.fillMaxWidth().clickable { focusIdx = idx }
+                ) {
+                    Row(modifier = Modifier.padding(horizontal = 14.dp, vertical = 10.dp), verticalAlignment = Alignment.CenterVertically) {
+                        Text(name, modifier = Modifier.weight(1f), fontSize = 14.sp, color = if (isFocused) Color.White else Color.Black, fontWeight = if (isFocused) FontWeight.SemiBold else FontWeight.Normal)
+                        val tempStr = if (s.oos) "—" else if (s.temp.isBlank()) "" else "${if (s.positive) "" else "−"}${s.temp}"
+                        Text(tempStr, modifier = Modifier.width(60.dp), fontSize = 14.sp, color = if (isFocused) Color.White else Color.Black, textAlign = TextAlign.End)
+                        Text(if (s.oos) "Y" else "N", modifier = Modifier.width(48.dp), fontSize = 14.sp, color = if (isFocused) Color.White else Color.Black, textAlign = TextAlign.End)
+                    }
+                }
+                HorizontalDivider(color = Color(0xFFE2E8F0))
+            }
+        }
+
+        // Daily Safety Check confirmation (3/3 in the reference — i.e. "all three required checks
+        // for today are complete"). We reflect current state as N / N.
+        Row(modifier = Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = 10.dp), verticalAlignment = Alignment.CenterVertically) {
+            Surface(
+                shape = RoundedCornerShape(3.dp),
+                color = Color.Transparent,
+                border = BorderStroke(1.5.dp, if (dailyChecked) Color(0xFF16A34A) else Color(0xFF94A3B8)),
+                modifier = Modifier.size(20.dp).clickable { dailyChecked = !dailyChecked }
+            ) {
+                if (dailyChecked) Box(Modifier.fillMaxSize().background(Color(0xFF16A34A)), contentAlignment = Alignment.Center) {
+                    Icon(Icons.Default.Check, null, tint = Color.White, modifier = Modifier.size(14.dp))
+                }
+            }
+            Spacer(Modifier.width(8.dp))
+            Text("Daily Safety Check (${state.count { it.temp.isNotBlank() || it.oos }}/${state.size})", fontSize = 13.sp, modifier = Modifier.weight(1f))
+            Icon(Icons.Default.Info, null, tint = Color(0xFF0EA5E9))
+        }
+
+        // Action bar
+        Row(modifier = Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = 12.dp), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+            OutlinedButton(
+                onClick = { toast = "Progress saved locally"; toastOk = true },
+                shape = RoundedCornerShape(4.dp),
+                border = BorderStroke(1.dp, Color(0xFF64748B)),
+                modifier = Modifier.weight(1f)
+            ) { Text("Complete Later", color = Color.Black) }
+            Button(
+                onClick = {
+                    submitting = true
+                    scope.launch {
+                        try {
+                            val details = fixtures.mapIndexed { i, (name, _) ->
+                                val s = state[i]
+                                val t = if (s.oos) "OOS" else "${if (s.positive) "" else "-"}${s.temp}F"
+                                "${name}=${t}"
+                            }.joinToString(",")
+                            val anyOutOfRange = fixtures.mapIndexed { i, (name, _) ->
+                                val s = state[i]
+                                if (s.oos) return@mapIndexed false
+                                val t = s.temp.toDoubleOrNull() ?: return@mapIndexed false
+                                val signed = if (s.positive) t else -t
+                                if (name.contains("Freezer", ignoreCase = true) || name.contains("Ice Cream", ignoreCase = true)) signed > 0 || signed < -20
+                                else signed < 32 || signed > 45
+                            }.any { it }
+                            val r = RetrofitClient.instance.submitCompliance(storeId,
+                                com.github.tyke_bc.hht.network.ComplianceRequest(checkType, null, details, !anyOutOfRange && dailyChecked, null, MainActivity.loggedInEid.ifBlank { null }))
+                            toastOk = r.success; toast = r.message ?: if (r.success) "Submitted" else "Failed"
+                            if (r.success) { state.forEachIndexed { i, _ -> state[i] = FridgeFixtureState(positive = fixtures[i].second) }; focusIdx = 0; dailyChecked = false }
+                        } catch (e: Exception) { toastOk = false; toast = e.message }
+                        finally { submitting = false }
+                    }
+                },
+                enabled = allEntered && dailyChecked && !submitting,
+                shape = RoundedCornerShape(4.dp),
+                colors = ButtonDefaults.buttonColors(containerColor = orange, disabledContainerColor = Color(0xFFE2E8F0)),
+                modifier = Modifier.weight(1f)
+            ) {
+                if (submitting) CircularProgressIndicator(modifier = Modifier.size(18.dp), strokeWidth = 2.dp, color = Color.White)
+                else Text("Done", color = if (allEntered && dailyChecked) Color.White else Color(0xFF94A3B8), fontWeight = FontWeight.Bold)
+            }
+        }
+        toast?.let {
+            Surface(color = if (toastOk) Color(0xFFECFDF5) else Color(0xFFFEF2F2), border = BorderStroke(1.dp, if (toastOk) Color(0xFF10B981) else Color(0xFFEF4444)), modifier = Modifier.fillMaxWidth()) {
+                Text(it, color = if (toastOk) Color(0xFF047857) else Color(0xFF991B1B), fontSize = 13.sp, modifier = Modifier.padding(10.dp))
+            }
+        }
+    }
 }
+
+// ---------- STORE COMPLIANCE CHECKS ----------
+// Reference: IMG_1560 (intro modal) + IMG_1561-1564 (per-item inspection: photo + instruction
+// on top, checklist of all items below). User walks through each item, marks pass/fail,
+// submits when complete. Complete Later persists partial progress (local only for now).
+private data class ComplianceItem(val name: String, val instruction: String, val icon: androidx.compose.ui.graphics.vector.ImageVector)
 
 @Composable
 fun ComplianceCheckContent(storeId: String) {
-    ChecklistScreen(storeId, "COMPLIANCE", "COMPLIANCE CHECK", listOf(
-        "Register drawer locked when unattended",
-        "Age-restricted SKUs behind counter / locked",
-        "Receipt printer has paper",
-        "Employee nametags worn",
-        "Tobacco/alcohol signage visible",
-        "Price tags match POS pricing (spot check)",
-        "No expired product on sales floor"
-    ), Color(0xFFFF6F00))
-}
-
-// ---------- REFRIGERATION MAINTENANCE (temperature log per fixture) ----------
-@Composable
-fun RefrigerationMaintenanceContent(storeId: String) {
-    val fixtures = listOf("Front Cooler", "MAG Cooler", "Open Air", "Freezer 1", "Freezer 2", "Dairy Case", "Produce Case")
-    val temps = remember { androidx.compose.runtime.snapshots.SnapshotStateMap<String, String>() }
-    var notes by remember { mutableStateOf("") }
+    val items = remember {
+        listOf(
+            ComplianceItem(
+                "Electrical Panel",
+                "Please ensure the Electrical Panel is accessible.",
+                Icons.Default.ElectricalServices
+            ),
+            ComplianceItem(
+                "Emergency Exit Door",
+                "Please ensure the Emergency Exit Door is free of obstructions.",
+                Icons.Default.ExitToApp
+            ),
+            ComplianceItem(
+                "Fire Extinguisher",
+                "Please ensure all Fire Extinguishers are accessible.",
+                Icons.Default.LocalFireDepartment
+            ),
+            ComplianceItem(
+                "Daily PIN Pad Check",
+                "Complete a visual and physical check on all PIN Pads to ensure no card skimming devices are present. If a card skimming device is found, complete a respond ticket (Respond > In-Store Security Inspection > Pin Pad Skimming Device), and call your DM immediately.",
+                Icons.Default.CreditCard
+            )
+        )
+    }
+    val results = remember { androidx.compose.runtime.snapshots.SnapshotStateMap<String, Boolean>() }
+    var focusIdx by remember { mutableIntStateOf(0) }
+    var showIntro by remember { mutableStateOf(true) }
     var submitting by remember { mutableStateOf(false) }
     var toast by remember { mutableStateOf<String?>(null) }
-    var ok by remember { mutableStateOf(true) }
+    var toastOk by remember { mutableStateOf(true) }
     val scope = rememberCoroutineScope()
-    Column(modifier = Modifier.fillMaxSize().padding(12.dp).verticalScroll(rememberScrollState())) {
-        Surface(color = DGBlue, shape = RoundedCornerShape(4.dp)) {
-            Text("REFRIGERATION TEMP LOG", color = Color.White, fontWeight = FontWeight.Bold, modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp))
+    val orange = Color(0xFFFF6F00)
+
+    // Intro modal (IMG_1560 — "UHHT alert" explaining the audit purpose).
+    if (showIntro) {
+        AlertDialog(
+            onDismissRequest = { showIntro = false },
+            title = { Text("UHHT alert", fontWeight = FontWeight.Bold) },
+            text = { Text("You are about to enter the compliance / accessibility app. Please ensure all areas on the survey are compliant to the SOP. Thank you for your assistance.", fontSize = 14.sp) },
+            confirmButton = { TextButton(onClick = { showIntro = false }) { Text("OK") } }
+        )
+    }
+
+    val focused = items[focusIdx.coerceAtMost(items.lastIndex)]
+    val allChecked = items.all { results[it.name] != null }
+
+    Column(modifier = Modifier.fillMaxSize().background(Color.White)) {
+        // Orange-accent local title bar (reference uses an icon badge, not the regular yellow header).
+        Row(
+            modifier = Modifier.fillMaxWidth().background(brush = Brush.verticalGradient(colors = listOf(Color(0xFFFFF4D9), Color.White))).padding(horizontal = 10.dp, vertical = 8.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Surface(color = orange, shape = RoundedCornerShape(6.dp)) {
+                Icon(Icons.Default.FactCheck, null, tint = Color.White, modifier = Modifier.padding(6.dp).size(24.dp))
+            }
+            Spacer(Modifier.width(10.dp))
+            Text("Store Compliance Checks", fontWeight = FontWeight.Bold, fontSize = 16.sp)
         }
-        Spacer(Modifier.height(8.dp))
-        Text("Record current temperature (°F) for each fixture. Coolers should be 34–40°F, freezers -10 to 0°F.", fontSize = 11.sp, color = Color(0xFF64748B))
-        Spacer(Modifier.height(6.dp))
-        fixtures.forEach { fx ->
-            Row(modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp), verticalAlignment = Alignment.CenterVertically) {
-                Text(fx, modifier = Modifier.weight(1f), fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
-                BasicTextField(
-                    value = temps[fx] ?: "", onValueChange = { v -> temps[fx] = v.filter { c -> c.isDigit() || c == '-' || c == '.' } },
-                    modifier = Modifier.width(80.dp).height(40.dp).border(1.dp, Color.Gray).padding(8.dp),
-                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
-                    textStyle = TextStyle(fontSize = 14.sp, textAlign = TextAlign.Center)
-                )
-                Text("°F", modifier = Modifier.padding(start = 4.dp), fontSize = 12.sp)
+
+        Column(modifier = Modifier.weight(1f).verticalScroll(rememberScrollState())) {
+            // Focused-item panel: instruction text on the left, visual placeholder on the right
+            // (ref IMG_1561-1564 — this is where real compliance photos would live if/when you
+            // drop them into res/drawable and swap the Icon for a Image painter.)
+            Row(modifier = Modifier.fillMaxWidth().padding(10.dp), verticalAlignment = Alignment.CenterVertically) {
+                Surface(color = Color.White, border = BorderStroke(1.dp, Color(0xFFCBD5E1)), modifier = Modifier.weight(1f).heightIn(min = 160.dp)) {
+                    Text(focused.instruction, fontSize = 13.sp, color = Color.Black, modifier = Modifier.padding(10.dp))
+                }
+                Spacer(Modifier.width(8.dp))
+                Surface(color = Color(0xFFF1F5F9), border = BorderStroke(2.dp, Color(0xFF84CC16)), modifier = Modifier.weight(1f).heightIn(min = 160.dp)) {
+                    Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                        Icon(focused.icon, null, tint = Color(0xFF475569), modifier = Modifier.size(72.dp))
+                    }
+                }
+            }
+
+            // Bottom: compliant-to-SOP header + item list (ref layout).
+            val headerText = results[focused.name]?.let { if (it) "Yes" else "No" } ?: "?"
+            Row(modifier = Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = 4.dp), horizontalArrangement = Arrangement.SpaceBetween) {
+                Text("Compliant to SOP?", fontWeight = FontWeight.Bold, fontSize = 14.sp)
+                Text(headerText, fontWeight = FontWeight.Bold, fontSize = 14.sp, color = when (results[focused.name]) { true -> Color(0xFF16A34A); false -> Color(0xFFDC2626); else -> Color(0xFF94A3B8) })
+            }
+            HorizontalDivider(color = Color(0xFFE2E8F0))
+            items.forEachIndexed { idx, item ->
+                val state = results[item.name]
+                val isFocused = idx == focusIdx
+                Surface(
+                    color = if (isFocused) Color(0xFFFFFBEA) else Color.White,
+                    modifier = Modifier.fillMaxWidth().clickable { focusIdx = idx }
+                ) {
+                    Row(modifier = Modifier.padding(horizontal = 14.dp, vertical = 14.dp), verticalAlignment = Alignment.CenterVertically) {
+                        Text(item.name, modifier = Modifier.weight(1f), fontSize = 14.sp, fontWeight = if (isFocused) FontWeight.SemiBold else FontWeight.Normal)
+                        // Pass / Fail radios (reference just has a single circle — we add both
+                        // so the user can record a failure without leaving the screen).
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            ComplianceRadio(label = "Yes", selected = state == true, color = Color(0xFF16A34A)) {
+                                results[item.name] = true
+                                val next = items.indexOfFirst { results[it.name] == null }
+                                if (next >= 0) focusIdx = next
+                            }
+                            Spacer(Modifier.width(12.dp))
+                            ComplianceRadio(label = "No", selected = state == false, color = Color(0xFFDC2626)) {
+                                results[item.name] = false
+                                val next = items.indexOfFirst { results[it.name] == null }
+                                if (next >= 0) focusIdx = next
+                            }
+                        }
+                    }
+                }
+                HorizontalDivider(color = Color(0xFFE2E8F0))
             }
         }
-        Spacer(Modifier.height(8.dp))
-        Text("Notes (issues, service needed, etc.)", fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
-        BasicTextField(value = notes, onValueChange = { notes = it },
-            modifier = Modifier.fillMaxWidth().height(60.dp).border(1.dp, Color.Gray).padding(8.dp))
-        Spacer(Modifier.height(12.dp))
-        Button(
-            onClick = {
-                submitting = true
-                scope.launch {
-                    try {
-                        val recorded = fixtures.mapNotNull { fx -> temps[fx]?.takeIf { it.isNotBlank() }?.let { "${fx}=${it}F" } }
-                        if (recorded.isEmpty()) { ok = false; toast = "Enter at least one temp"; submitting = false; return@launch }
-                        val anyOutOfRange = fixtures.any { fx ->
-                            val t = temps[fx]?.toDoubleOrNull() ?: return@any false
-                            if (fx.contains("Freezer", ignoreCase = true)) t > 0 || t < -20
-                            else t < 32 || t > 45
-                        }
-                        val r = RetrofitClient.instance.submitCompliance(storeId,
-                            com.github.tyke_bc.hht.network.ComplianceRequest("REFRIGERATION", null, recorded.joinToString(","), !anyOutOfRange, notes.ifBlank { null }, MainActivity.loggedInEid.ifBlank { null }))
-                        ok = r.success; toast = r.message ?: if (r.success) "Logged" else "Failed"
-                        if (r.success) { temps.clear(); notes = "" }
-                    } catch (e: Exception) { ok = false; toast = e.message }
-                    finally { submitting = false }
+
+        // Action bar
+        Row(modifier = Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = 12.dp), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+            OutlinedButton(
+                onClick = { toast = "Partial check saved locally"; toastOk = true },
+                shape = RoundedCornerShape(4.dp),
+                border = BorderStroke(1.dp, Color(0xFF64748B)),
+                modifier = Modifier.weight(1f)
+            ) { Text("Complete Later", color = Color.Black) }
+            Button(
+                onClick = {
+                    submitting = true
+                    scope.launch {
+                        try {
+                            val allPassed = items.all { results[it.name] == true }
+                            val details = items.joinToString(",") { "${it.name}=${when (results[it.name]) { true -> "PASS"; false -> "FAIL"; else -> "SKIP" }}" }
+                            val r = RetrofitClient.instance.submitCompliance(storeId,
+                                com.github.tyke_bc.hht.network.ComplianceRequest("COMPLIANCE", null, details, allPassed, null, MainActivity.loggedInEid.ifBlank { null }))
+                            toastOk = r.success; toast = r.message ?: if (r.success) "Submitted" else "Failed"
+                            if (r.success) { results.clear(); focusIdx = 0 }
+                        } catch (e: Exception) { toastOk = false; toast = e.message }
+                        finally { submitting = false }
+                    }
+                },
+                enabled = allChecked && !submitting,
+                shape = RoundedCornerShape(4.dp),
+                colors = ButtonDefaults.buttonColors(containerColor = orange, disabledContainerColor = Color(0xFFE2E8F0)),
+                modifier = Modifier.weight(1f)
+            ) {
+                if (submitting) CircularProgressIndicator(modifier = Modifier.size(18.dp), strokeWidth = 2.dp, color = Color.White)
+                else Text("Done", color = if (allChecked) Color.White else Color(0xFF94A3B8), fontWeight = FontWeight.Bold)
+            }
+        }
+        toast?.let {
+            Surface(color = if (toastOk) Color(0xFFECFDF5) else Color(0xFFFEF2F2), border = BorderStroke(1.dp, if (toastOk) Color(0xFF10B981) else Color(0xFFEF4444)), modifier = Modifier.fillMaxWidth()) {
+                Text(it, color = if (toastOk) Color(0xFF047857) else Color(0xFF991B1B), fontSize = 13.sp, modifier = Modifier.padding(10.dp))
+            }
+        }
+    }
+}
+
+@Composable
+private fun ComplianceRadio(label: String, selected: Boolean, color: Color, onClick: () -> Unit) {
+    Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.clickable(onClick = onClick)) {
+        Surface(
+            shape = RoundedCornerShape(50),
+            color = Color.Transparent,
+            border = BorderStroke(1.5.dp, if (selected) color else Color(0xFF94A3B8)),
+            modifier = Modifier.size(22.dp)
+        ) {
+            if (selected) Box(Modifier.padding(3.dp).background(color, RoundedCornerShape(50)))
+        }
+        Spacer(Modifier.width(4.dp))
+        Text(label, fontSize = 12.sp, color = if (selected) color else Color(0xFF475569))
+    }
+}
+
+// ---------- REFRIGERATION MAINTENANCE ----------
+// Reference: IMG_1565 — editable unit inventory (unit_number + description), OOS toggle per
+// row, category selector at the top (e.g. "Ice Cream"). Each row has a delete trash icon.
+// "New Unit" + green plus at the bottom opens an add dialog.
+@Composable
+fun RefrigerationMaintenanceContent(storeId: String) {
+    var category by remember { mutableStateOf("Ice Cream") }
+    var showCategoryEdit by remember { mutableStateOf(false) }
+    var units by remember { mutableStateOf<List<com.github.tyke_bc.hht.network.RefrigerationUnit>>(emptyList()) }
+    var loading by remember { mutableStateOf(true) }
+    var showAddDialog by remember { mutableStateOf(false) }
+    var newUnitNum by remember { mutableStateOf("") }
+    var newDesc by remember { mutableStateOf("") }
+    var toast by remember { mutableStateOf<String?>(null) }
+    var toastOk by remember { mutableStateOf(true) }
+    val scope = rememberCoroutineScope()
+
+    suspend fun refresh() {
+        loading = true
+        try {
+            val r = RetrofitClient.instance.getRefrigerationUnits(storeId, category)
+            if (r.success) units = r.units ?: emptyList()
+        } catch (e: Exception) { toast = e.message; toastOk = false }
+        finally { loading = false }
+    }
+
+    LaunchedEffect(category) { refresh() }
+
+    if (showCategoryEdit) {
+        var draft by remember(category) { mutableStateOf(category) }
+        AlertDialog(
+            onDismissRequest = { showCategoryEdit = false },
+            title = { Text("Category") },
+            text = {
+                BasicTextField(value = draft, onValueChange = { draft = it },
+                    modifier = Modifier.fillMaxWidth().height(40.dp).border(1.dp, Color(0xFF94A3B8), RoundedCornerShape(4.dp)).padding(8.dp),
+                    textStyle = TextStyle(fontSize = 16.sp), singleLine = true)
+            },
+            confirmButton = { Button(onClick = { category = draft.ifBlank { category }; showCategoryEdit = false }) { Text("OK") } },
+            dismissButton = { TextButton(onClick = { showCategoryEdit = false }) { Text("Cancel") } }
+        )
+    }
+
+    if (showAddDialog) {
+        AlertDialog(
+            onDismissRequest = { showAddDialog = false; newUnitNum = ""; newDesc = "" },
+            title = { Text("New $category Unit") },
+            text = {
+                Column {
+                    Text("Unit Number", fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
+                    BasicTextField(value = newUnitNum, onValueChange = { newUnitNum = it },
+                        modifier = Modifier.fillMaxWidth().height(40.dp).border(1.dp, Color(0xFF94A3B8), RoundedCornerShape(4.dp)).padding(8.dp),
+                        textStyle = TextStyle(fontSize = 14.sp), singleLine = true)
+                    Spacer(Modifier.height(8.dp))
+                    Text("Description", fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
+                    BasicTextField(value = newDesc, onValueChange = { newDesc = it },
+                        modifier = Modifier.fillMaxWidth().height(40.dp).border(1.dp, Color(0xFF94A3B8), RoundedCornerShape(4.dp)).padding(8.dp),
+                        textStyle = TextStyle(fontSize = 14.sp), singleLine = true)
                 }
             },
-            enabled = !submitting, colors = ButtonDefaults.buttonColors(containerColor = DGBlue),
-            modifier = Modifier.fillMaxWidth()
-        ) { if (submitting) CircularProgressIndicator(modifier = Modifier.size(18.dp), strokeWidth = 2.dp, color = Color.White) else Text("LOG TEMPS", fontWeight = FontWeight.Bold) }
+            confirmButton = {
+                Button(onClick = {
+                    if (newUnitNum.isBlank()) return@Button
+                    scope.launch {
+                        try {
+                            val r = RetrofitClient.instance.createRefrigerationUnit(storeId,
+                                com.github.tyke_bc.hht.network.CreateRefrigerationUnitRequest(newUnitNum.trim(), newDesc.ifBlank { null }, category))
+                            if (r.success) {
+                                showAddDialog = false; newUnitNum = ""; newDesc = ""; refresh()
+                            } else { toast = r.message ?: "Failed"; toastOk = false }
+                        } catch (e: Exception) { toast = e.message; toastOk = false }
+                    }
+                }) { Text("Add") }
+            },
+            dismissButton = { TextButton(onClick = { showAddDialog = false; newUnitNum = ""; newDesc = "" }) { Text("Cancel") } }
+        )
+    }
+
+    Column(modifier = Modifier.fillMaxSize().background(Color.White)) {
+        // Category row + RESPOND shortcut (reference has a "RESPOND" link top-right)
+        Row(modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 10.dp), verticalAlignment = Alignment.CenterVertically) {
+            Text(category, fontSize = 16.sp, fontWeight = FontWeight.SemiBold)
+            Spacer(Modifier.width(6.dp))
+            Icon(Icons.Default.Edit, null, tint = Color(0xFF64748B), modifier = Modifier.size(16.dp).clickable { showCategoryEdit = true })
+            Spacer(Modifier.weight(1f))
+            Text("RESPOND", color = Color(0xFF2563EB), fontSize = 13.sp, fontWeight = FontWeight.SemiBold,
+                modifier = Modifier.clickable { toast = "Open DG Respond from launcher to file a ticket"; toastOk = true })
+        }
+        HorizontalDivider(color = Color(0xFFE2E8F0))
+
+        // Column headers
+        Row(modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 6.dp)) {
+            Spacer(Modifier.weight(1f))
+            Icon(Icons.Default.SwapVert, null, tint = Color(0xFF64748B), modifier = Modifier.size(18.dp).width(56.dp))
+            Text("OOS", modifier = Modifier.width(48.dp), fontSize = 12.sp, fontWeight = FontWeight.SemiBold, textAlign = TextAlign.Center)
+            Icon(Icons.Default.Delete, null, tint = Color(0xFF64748B), modifier = Modifier.size(18.dp).width(40.dp))
+        }
+        HorizontalDivider(color = Color(0xFFE2E8F0))
+
+        // Rows
+        Column(modifier = Modifier.weight(1f).verticalScroll(rememberScrollState())) {
+            if (loading) Box(Modifier.fillMaxWidth().padding(24.dp), contentAlignment = Alignment.Center) { CircularProgressIndicator(color = DGBlue) }
+            else if (units.isEmpty()) Text("No units yet. Tap New Unit below.", modifier = Modifier.padding(16.dp), color = Color.Gray)
+            else units.forEach { u ->
+                Column {
+                    Row(modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 10.dp), verticalAlignment = Alignment.CenterVertically) {
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(u.unitNumber, fontSize = 14.sp, fontWeight = FontWeight.SemiBold)
+                            if (!u.description.isNullOrBlank()) Text("Desc: ${u.description}", fontSize = 11.sp, color = Color(0xFF64748B))
+                        }
+                        Spacer(Modifier.width(56.dp)) // space under sort icon column
+                        val isOos = u.oos != 0
+                        Surface(
+                            shape = RoundedCornerShape(3.dp),
+                            color = Color.Transparent,
+                            border = BorderStroke(1.5.dp, if (isOos) Color(0xFF0EA5E9) else Color(0xFF94A3B8)),
+                            modifier = Modifier.size(22.dp).clickable {
+                                scope.launch {
+                                    try {
+                                        val r = RetrofitClient.instance.updateRefrigerationUnit(storeId, u.id,
+                                            com.github.tyke_bc.hht.network.UpdateRefrigerationUnitRequest(oos = !isOos))
+                                        if (r.success) refresh() else { toast = r.message ?: "Failed"; toastOk = false }
+                                    } catch (e: Exception) { toast = e.message; toastOk = false }
+                                }
+                            }.width(48.dp)
+                        ) {
+                            if (isOos) Box(Modifier.fillMaxSize().background(Color(0xFF0EA5E9)), contentAlignment = Alignment.Center) {
+                                Icon(Icons.Default.Check, null, tint = Color.White, modifier = Modifier.size(14.dp))
+                            }
+                        }
+                        Icon(Icons.Default.DeleteOutline, null, tint = Color(0xFFDC2626),
+                            modifier = Modifier.size(22.dp).width(40.dp).clickable {
+                                scope.launch {
+                                    try {
+                                        val r = RetrofitClient.instance.deleteRefrigerationUnit(storeId, u.id)
+                                        if (r.success) refresh() else { toast = r.message ?: "Failed"; toastOk = false }
+                                    } catch (e: Exception) { toast = e.message; toastOk = false }
+                                }
+                            })
+                    }
+                    HorizontalDivider(color = Color(0xFFE2E8F0))
+                }
+            }
+        }
+
+        // New-unit footer
+        Row(modifier = Modifier.fillMaxWidth().padding(12.dp).clickable { showAddDialog = true }, horizontalArrangement = Arrangement.End, verticalAlignment = Alignment.CenterVertically) {
+            Text("New Unit", fontSize = 14.sp, fontWeight = FontWeight.SemiBold)
+            Spacer(Modifier.width(6.dp))
+            Icon(Icons.Default.AddCircle, null, tint = Color(0xFF16A34A), modifier = Modifier.size(28.dp))
+        }
         toast?.let {
-            Spacer(Modifier.height(10.dp))
-            Surface(color = if (ok) Color(0xFFECFDF5) else Color(0xFFFEF2F2), border = BorderStroke(1.dp, if (ok) Color(0xFF10B981) else Color(0xFFEF4444))) {
-                Text(it, fontSize = 13.sp, modifier = Modifier.padding(10.dp))
+            Surface(color = if (toastOk) Color(0xFFECFDF5) else Color(0xFFFEF2F2), border = BorderStroke(1.dp, if (toastOk) Color(0xFF10B981) else Color(0xFFEF4444)), modifier = Modifier.fillMaxWidth()) {
+                Text(it, color = if (toastOk) Color(0xFF047857) else Color(0xFF991B1B), fontSize = 13.sp, modifier = Modifier.padding(10.dp))
             }
         }
     }
@@ -1821,16 +2337,29 @@ fun RefrigerationMaintenanceContent(storeId: String) {
 
 @Composable
 fun AdjustmentsDamagesContent(upcInput: String, onUpcChange: (String) -> Unit) {
+    // Reason codes match the real DG UHHT reference (IMG_1547).
     AdjustmentFormHost(upcInput, onUpcChange, "DAMAGES",
-        listOf("DMG", "SHRINK", "EXPIRED", "RECALL"),
-        "DAMAGED / SHRINK / EXPIRED", Color(0xFFEF4444))
+        listOf(
+            "In Store Damage" to "IN_STORE_DAMAGE",
+            "Customer Return" to "CUSTOMER_RETURN",
+            "Past Expire Date" to "PAST_EXPIRE_DATE",
+            "Cooler/Freezer Outage" to "COOLER_FREEZER_OUTAGE",
+            "Received Damage" to "RECEIVED_DAMAGE"
+        ),
+        "DAMAGES", Color(0xFFEF4444))
 }
 
 @Composable
 fun AdjustmentsStoreUseContent(upcInput: String, onUpcChange: (String) -> Unit) {
+    // Reference Store Use tab (IMG_1548) has no reason picker — reason is implicit.
     AdjustmentFormHost(upcInput, onUpcChange, "STORE_USE",
-        listOf("CLEANING", "BREAKROOM", "OFFICE", "TRAINING", "OTHER"),
-        "STORE USE", Color(0xFF2563EB))
+        emptyList(), "STORE USE", Color(0xFF2563EB))
+}
+
+@Composable
+fun AdjustmentsDonationsContent(upcInput: String, onUpcChange: (String) -> Unit) {
+    AdjustmentFormHost(upcInput, onUpcChange, "DONATION",
+        emptyList(), "DONATIONS", Color(0xFF10B981))
 }
 
 // Host needs the current storeId — plumbed via a CompositionLocal so we don't have to rewrite the Adjustments call sites.
@@ -1841,7 +2370,7 @@ fun AdjustmentFormHost(
     upcInput: String,
     onUpcChange: (String) -> Unit,
     adjustmentType: String,
-    reasons: List<String>,
+    reasons: List<Pair<String, String>>,
     headerLabel: String,
     headerColor: Color
 ) {

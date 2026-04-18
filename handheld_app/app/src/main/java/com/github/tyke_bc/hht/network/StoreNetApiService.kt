@@ -199,7 +199,7 @@ interface StoreNetApiService {
     @GET("api/bopis/manifests")
     suspend fun getManifests(
         @Header("X-Store-ID") storeId: String
-    ): List<TruckManifest>
+    ): ManifestListResponse
 
     @GET("api/bopis/manifests/{id}")
     suspend fun getManifestDetails(
@@ -425,6 +425,32 @@ interface StoreNetApiService {
         @Header("X-Store-ID") storeId: String,
         @Path("id") vendorId: Int
     ): List<VendorInventoryRow>
+
+    // Refrigeration units (Refrigeration Maintenance screen)
+    @GET("api/refrigeration/units")
+    suspend fun getRefrigerationUnits(
+        @Header("X-Store-ID") storeId: String,
+        @retrofit2.http.Query("category") category: String? = null
+    ): RefrigerationUnitsResponse
+
+    @POST("api/refrigeration/units")
+    suspend fun createRefrigerationUnit(
+        @Header("X-Store-ID") storeId: String,
+        @Body request: CreateRefrigerationUnitRequest
+    ): CreateIdResponse
+
+    @PUT("api/refrigeration/units/{id}")
+    suspend fun updateRefrigerationUnit(
+        @Header("X-Store-ID") storeId: String,
+        @Path("id") id: Int,
+        @Body request: UpdateRefrigerationUnitRequest
+    ): GenericResponse
+
+    @DELETE("api/refrigeration/units/{id}")
+    suspend fun deleteRefrigerationUnit(
+        @Header("X-Store-ID") storeId: String,
+        @Path("id") id: Int
+    ): GenericResponse
 
     // Vendor visits (check-in log)
     @GET("api/vendor-visits/active")
@@ -710,6 +736,33 @@ data class Vendor(
     val notes: String?,
     val active: Int,
     @SerializedName("sku_count") val skuCount: Int? = 0
+)
+
+data class RefrigerationUnit(
+    val id: Int,
+    @SerializedName("unit_number") val unitNumber: String,
+    val description: String?,
+    val category: String?,
+    val oos: Int = 0,
+    @SerializedName("created_at") val createdAt: String?
+)
+
+data class RefrigerationUnitsResponse(
+    val success: Boolean,
+    val units: List<RefrigerationUnit>?
+)
+
+data class CreateRefrigerationUnitRequest(
+    @SerializedName("unit_number") val unitNumber: String,
+    val description: String? = null,
+    val category: String? = null
+)
+
+data class UpdateRefrigerationUnitRequest(
+    @SerializedName("unit_number") val unitNumber: String? = null,
+    val description: String? = null,
+    val category: String? = null,
+    val oos: Boolean? = null
 )
 
 data class VendorVisit(
@@ -1120,6 +1173,16 @@ data class TruckManifest(
     @SerializedName("bol_number") val bolNumber: String?,
     val status: String,
     @SerializedName("created_at") val createdAt: String
+)
+
+// Server returns a paginated wrapper { rows, page, limit, total, totalPages },
+// not a bare array. Matches the /api/bopis/manifests endpoint in server.js.
+data class ManifestListResponse(
+    val rows: List<TruckManifest> = emptyList(),
+    val page: Int? = null,
+    val limit: Int? = null,
+    val total: Int? = null,
+    val totalPages: Int? = null
 )
 
 data class ManifestItem(
