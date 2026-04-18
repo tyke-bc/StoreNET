@@ -7,5 +7,10 @@
 - [Dashboard URL](reference_dashboard_url.md) — backoffice runs at http://192.168.0.192:3000; user logs in manually each session
 - [Express route-order gotcha](feedback_express_route_order.md) — specific static routes must be registered before `:id` wildcards or they get shadowed and silently no-op
 - [storeContext bypass prefixes](feedback_storecontext_bypass.md) — certain /api paths skip storeContext so req.pool is undefined; resolve the pool manually from X-Store-ID
+- [Worktree builds vs main](feedback_worktree_vs_main_builds.md) — a green build in the worktree doesn't prove main builds when main has uncommitted edits the worktree didn't see
+- [Solo workflow — commit to main](feedback_workflow_solo_main.md) — no PR ceremony; cherry-pick worktree commits onto main; don't push without being asked
+- [Compose TextField capture race](feedback_compose_textfield_race.md) — BasicTextField onValueChange writing off a captured snapshot drops keystrokes; fix is a local mirror state
+- [Chrome MCP debug workflow](reference_chrome_mcp_debug.md) — how to wire up the Chrome MCP to live-debug the StoreNET dashboard (buffers don't backfill — arm them first)
+- [HHT audit 2026-04-17](project_hht_audit_2026_04_17.md) — no dead tabs anywhere; main remaining gap is unifying old screens to the DG-yellow header palette
 - [Extensions 2026-04-17](project_extensions_2026_04_17.md) — BOPIS short-pick reasons, POG reset history/HHT card, vendor visits check-in log, recurring tasks generator
 - [HHT reference-matching redesign](project_hht_reference_redesign.md) — Adjustments, Compliance, Cooler/Freezer Safety, Refrigeration Maintenance rebuilt to match real DG UHHT photos; new refrigeration_units table
