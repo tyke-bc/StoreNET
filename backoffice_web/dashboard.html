@@ -1392,8 +1392,8 @@
                     <td>#${o.id}${o.is_mock ? ' <small style="color:#e67e22">[TEST]</small>' : ''}</td>
                     <td>${o.customer_name}</td>
                     <td><span style="font-weight:bold; color:${statusColor}">${o.status}</span></td>
-                    <td>$${(o.subtotal || 0).toFixed(2)}</td><td>$${(o.tax || 0).toFixed(2)}</td>
-                    <td><b>$${(o.total || 0).toFixed(2)}</b></td>
+                    <td>$${Number(o.subtotal || 0).toFixed(2)}</td><td>$${Number(o.tax || 0).toFixed(2)}</td>
+                    <td><b>$${Number(o.total || 0).toFixed(2)}</b></td>
                     <td>${new Date(o.created_at).toLocaleString()}</td>
                     <td>
                         <span class="action-link delete" onclick="deleteOrder(${o.id})">DELETE</span>

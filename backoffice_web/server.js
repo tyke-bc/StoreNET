@@ -1607,7 +1607,10 @@ function buildClosingReportPDF(data, storeId, date) {
         } else {
             doc.fontSize(8).font('Helvetica');
             data.completedTasks.forEach(t => {
-                doc.text(`${t.description}${t.assigned_name ? ' — ' + t.assigned_name : ''}`, 50);
+                const label = t.title || '(untitled task)';
+                const descPart = t.description ? ` — ${t.description}` : '';
+                const whoPart = t.assigned_name ? ` — ${t.assigned_name}` : '';
+                doc.text(`${label}${descPart}${whoPart}`, 50);
                 doc.moveDown(0.1);
             });
         }
@@ -3393,7 +3396,10 @@ app.put('/api/tasks/:id', async (req, res) => {
         if (rows.length > 0 && rows[0].task_type === 'POG_RESET') {
             return res.status(400).json({ success: false, message: 'Planogram reset tasks can only be completed by scanning each POG tag.' });
         }
-        await req.pool.query('UPDATE tasks SET status = ? WHERE id = ?', [status, req.params.id]);
+        await req.pool.query(
+            "UPDATE tasks SET status = ?, completed_at = CASE WHEN ? = 'DONE' THEN NOW() ELSE NULL END WHERE id = ?",
+            [status, status, req.params.id]
+        );
         res.json({ success: true });
     } catch (err) { res.status(500).json({ success: false, message: err.message }); }
 });
@@ -3787,7 +3793,8 @@ app.post('/api/reports/daily/closing', async (req, res) => {
             `SELECT tm.*, (SELECT COUNT(*) FROM manifest_items WHERE manifest_id = tm.id) AS item_count FROM truck_manifests tm WHERE tm.status = 'COMPLETED' AND DATE(tm.created_at) = ?`, [date]);
 
         const [completedTasks] = await req.pool.query(
-            `SELECT t.*, u.name AS assigned_name FROM tasks t LEFT JOIN users u ON t.assigned_eid = u.eid WHERE t.status = 'DONE'`);
+            `SELECT t.*, u.name AS assigned_name FROM tasks t LEFT JOIN users u ON t.assigned_eid = u.eid
+             WHERE t.status = 'DONE' AND DATE(t.completed_at) = ? AND t.task_type != 'POG_RESET'`, [date]);
 
         const [reorders] = await req.pool.query('SELECT * FROM auto_reorders ORDER BY created_at DESC LIMIT 50');
 
