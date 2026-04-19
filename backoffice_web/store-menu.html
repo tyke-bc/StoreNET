@@ -1,0 +1,529 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>StoreNET — Store Menu</title>
+    <link rel="stylesheet" href="style.css">
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+    <style>
+        .sidebar-header h2 { color: #ffd100; }
+        .sidebar { background: #2a1f0f; }
+        .nav-item.active { background: #ffd100 !important; color: #1a1105 !important; font-weight: bold; }
+        .content-header { border-bottom: 2px solid #ffd100; padding-bottom: 8px; }
+        .summary-row { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 14px; margin-bottom: 20px; }
+        .stat-card { background: #1e293b; border-radius: 8px; padding: 14px 16px; border-left: 4px solid #ffd100; }
+        .stat-card .lbl { font-size: 11px; color: #94a3b8; text-transform: uppercase; letter-spacing: 0.5px; }
+        .stat-card .val { font-size: 22px; font-weight: 700; color: #fff; margin-top: 4px; }
+        .stat-card .sub { font-size: 11px; color: #64748b; margin-top: 2px; }
+        .pill { display: inline-block; padding: 2px 8px; border-radius: 10px; font-size: 10px; font-weight: bold; text-transform: uppercase; }
+        .pill.OPEN { background: #065f46; color: #d1fae5; }
+        .pill.CLOSED { background: #334155; color: #cbd5e1; }
+        .pill.HELD { background: #7c2d12; color: #fed7aa; }
+        .pill.FORCE_CLOSED { background: #7f1d1d; color: #fecaca; }
+        .pill.PENDING { background: #78350f; color: #fde68a; }
+        .pill.APPLIED { background: #064e3b; color: #a7f3d0; }
+        .pill.CANCELLED { background: #334155; color: #94a3b8; }
+        .over-pos { color: #10b981; font-weight: bold; }
+        .over-neg { color: #ef4444; font-weight: bold; }
+        .over-zero { color: #64748b; font-weight: bold; }
+        .tab-bar { display: flex; background: #111827; border-bottom: 2px solid #ffd100; margin-bottom: 18px; }
+        .tab { padding: 10px 22px; cursor: pointer; color: #94a3b8; border-right: 1px solid #1f2937; font-weight: 500; }
+        .tab.active { background: #1e293b; color: #ffd100; font-weight: bold; }
+        .chart-box { background: #1e293b; border-radius: 8px; padding: 16px; margin-bottom: 20px; height: 360px; position: relative; }
+        .chart-box h3 { color: #fff; margin: 0 0 10px; font-size: 14px; }
+        .chart-box canvas { max-height: 300px; }
+        .data-table td, .data-table th { font-size: 13px; }
+        .action-btn { padding: 6px 12px; border-radius: 4px; border: none; cursor: pointer; font-size: 12px; font-weight: 600; margin-right: 4px; }
+        .action-btn.primary { background: #3b82f6; color: #fff; }
+        .action-btn.danger { background: #dc2626; color: #fff; }
+        .action-btn.subtle { background: #334155; color: #cbd5e1; }
+        .modal-overlay { position: fixed; inset: 0; background: rgba(0,0,0,.65); z-index: 9998; display: none; align-items: center; justify-content: center; }
+        .modal-overlay.open { display: flex; }
+        .modal-box { background: #1e293b; border: 2px solid #ffd100; border-radius: 10px; padding: 24px 28px; max-width: 720px; width: 92%; max-height: 88vh; overflow-y: auto; }
+        .modal-box h2 { color: #ffd100; margin: 0 0 6px; }
+        .modal-box .sub { color: #94a3b8; font-size: 12px; margin-bottom: 18px; }
+        .kv-grid { display: grid; grid-template-columns: 150px 1fr; gap: 6px 12px; margin-bottom: 14px; }
+        .kv-grid .k { color: #94a3b8; font-size: 12px; }
+        .kv-grid .v { color: #fff; font-size: 13px; font-weight: 500; }
+        .mini-tbl { width: 100%; border-collapse: collapse; font-size: 12px; }
+        .mini-tbl th, .mini-tbl td { padding: 6px 8px; border-bottom: 1px solid #334155; text-align: left; color: #cbd5e1; }
+        .mini-tbl th { color: #94a3b8; font-weight: 500; text-transform: uppercase; font-size: 10px; letter-spacing: 0.5px; }
+        .input-row { display: flex; gap: 10px; align-items: center; margin-bottom: 14px; flex-wrap: wrap; }
+        .input-row label { color: #94a3b8; font-size: 12px; }
+        .input-row input, .input-row select { padding: 6px 10px; background: #0f172a; border: 1px solid #334155; border-radius: 4px; color: #fff; font-size: 13px; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <nav class="sidebar">
+            <div class="sidebar-header"><h2>Store Menu</h2><div style="font-size: 10px; color: #bbb;">Keyholder view</div></div>
+            <div class="nav-item active" onclick="switchModule('till-active', this)">Active Sessions</div>
+            <div class="nav-item" onclick="switchModule('till-history', this)">Session History</div>
+            <div class="nav-item" onclick="switchModule('till-graphs', this)">Over / Short Graphs</div>
+            <div class="nav-item" onclick="switchModule('till-employees', this)">Employee Records</div>
+
+            <div style="margin-top: 50px; padding: 20px; border-top: 1px solid #3e4f5f;">
+                <label style="font-size: 10px; display: block; margin-bottom: 5px; color: #ffd100;">STORE CONTEXT</label>
+                <select id="storeSelector" onchange="onStoreChange(this.value)"><option value="">Loading...</option></select>
+            </div>
+            <div style="padding: 12px 20px;"><button onclick="window.location.href='/dashboard'" style="width:100%; padding: 8px; background:#334155; color:#cbd5e1; border:none; border-radius:4px; cursor:pointer;">← District Control</button></div>
+            <div style="padding: 8px 20px 20px;"><button onclick="window.location.href='/logout'" style="width:100%; padding: 8px; background:#dc2626; color:#fff; border:none; border-radius:4px; cursor:pointer;">EXIT</button></div>
+        </nav>
+
+        <main class="main-content">
+            <!-- ACTIVE SESSIONS -->
+            <div id="module-till-active" class="module-view active">
+                <div class="content-header"><h1>Active Till Sessions</h1></div>
+                <div class="summary-row" id="activeStatCards"></div>
+                <table class="data-table">
+                    <thead><tr>
+                        <th>Register</th><th>Cashier</th><th>Opened</th><th>Starting</th>
+                        <th>Sales</th><th>Refunds</th><th>Pickups</th><th>Expected</th>
+                        <th>Status</th><th>Actions</th>
+                    </tr></thead>
+                    <tbody id="activeSessionsBody"><tr class="tbl-loading"><td colspan="10"><span class="spinner"></span>Loading…</td></tr></tbody>
+                </table>
+            </div>
+
+            <!-- SESSION HISTORY -->
+            <div id="module-till-history" class="module-view" style="display:none;">
+                <div class="content-header"><h1>Session History &amp; Reconcile</h1></div>
+                <div class="input-row">
+                    <label>Window:</label>
+                    <select id="histDays" onchange="loadHistory()">
+                        <option value="7">Last 7 days</option>
+                        <option value="30" selected>Last 30 days</option>
+                        <option value="90">Last 90 days</option>
+                    </select>
+                    <label>Cashier EID:</label>
+                    <input id="histEid" type="text" placeholder="(any)" onchange="loadHistory()">
+                    <label>Register:</label>
+                    <input id="histRegister" type="text" placeholder="(any)" onchange="loadHistory()">
+                </div>
+                <table class="data-table">
+                    <thead><tr>
+                        <th>Session</th><th>Cashier</th><th>Register</th><th>Opened</th><th>Closed</th>
+                        <th>Expected</th><th>Actual</th><th>Over/Short</th><th>Status</th><th></th>
+                    </tr></thead>
+                    <tbody id="historyBody"><tr class="tbl-empty"><td colspan="10">Pick a window above.</td></tr></tbody>
+                </table>
+            </div>
+
+            <!-- GRAPHS -->
+            <div id="module-till-graphs" class="module-view" style="display:none;">
+                <div class="content-header"><h1>Over / Short Trends</h1></div>
+                <div class="input-row">
+                    <label>Window:</label>
+                    <select id="graphDays" onchange="loadGraphs()">
+                        <option value="7">Last 7 days</option>
+                        <option value="30" selected>Last 30 days</option>
+                        <option value="90">Last 90 days</option>
+                    </select>
+                </div>
+                <div class="chart-box"><h3>By Day (total over/short)</h3><canvas id="chartByDay"></canvas></div>
+                <div class="chart-box"><h3>By Cashier (avg over/short, last window)</h3><canvas id="chartByCashier"></canvas></div>
+                <div class="chart-box"><h3>By Register</h3><canvas id="chartByRegister"></canvas></div>
+            </div>
+
+            <!-- EMPLOYEE RECORDS -->
+            <div id="module-till-employees" class="module-view" style="display:none;">
+                <div class="content-header"><h1>Employee Records</h1></div>
+                <div class="input-row">
+                    <label>Window:</label>
+                    <select id="empDays" onchange="loadEmployees()">
+                        <option value="30" selected>Last 30 days</option>
+                        <option value="90">Last 90 days</option>
+                        <option value="365">Last year</option>
+                    </select>
+                </div>
+                <table class="data-table">
+                    <thead><tr>
+                        <th>EID</th><th>Name</th><th>Sessions</th>
+                        <th>Total Over/Short</th><th>Avg per Shift</th><th>Last Session</th><th></th>
+                    </tr></thead>
+                    <tbody id="employeesBody"><tr class="tbl-empty"><td colspan="7">Loading…</td></tr></tbody>
+                </table>
+            </div>
+        </main>
+    </div>
+
+    <!-- Session Reconcile Modal -->
+    <div class="modal-overlay" id="reconcileOverlay"><div class="modal-box" id="reconcileBox">(loading)</div></div>
+
+    <!-- Force Close Modal -->
+    <div class="modal-overlay" id="forceCloseOverlay"><div class="modal-box" id="forceCloseBox">(loading)</div></div>
+
+    <!-- Employee Detail Modal -->
+    <div class="modal-overlay" id="empDetailOverlay"><div class="modal-box" id="empDetailBox">(loading)</div></div>
+
+    <script>
+    let currentStoreId = null;
+    let activeRefreshTimer = null;
+    const charts = {};
+
+    function api(path, opts = {}) {
+        return fetch(path, {
+            ...opts,
+            headers: { 'Content-Type': 'application/json', 'X-Store-ID': currentStoreId || '', ...(opts.headers || {}) }
+        }).then(r => r.json());
+    }
+    function fmt(n) { return n == null ? '—' : '$' + Number(n).toFixed(2); }
+    function fmtDt(d) { return d ? new Date(d).toLocaleString() : '—'; }
+    function overCls(n) {
+        if (n == null) return 'over-zero';
+        if (Math.abs(n) < 0.005) return 'over-zero';
+        return n > 0 ? 'over-pos' : 'over-neg';
+    }
+    function overLabel(n) {
+        if (n == null) return '—';
+        const v = Number(n);
+        if (Math.abs(v) < 0.005) return 'EVEN';
+        return (v > 0 ? '+' : '') + '$' + v.toFixed(2);
+    }
+
+    function switchModule(name, el) {
+        document.querySelectorAll('.module-view').forEach(v => v.style.display = 'none');
+        document.querySelectorAll('.nav-item').forEach(i => i.classList.remove('active'));
+        document.getElementById('module-' + name).style.display = 'block';
+        el.classList.add('active');
+        if (name === 'till-active') loadActive();
+        if (name === 'till-history') loadHistory();
+        if (name === 'till-graphs') loadGraphs();
+        if (name === 'till-employees') loadEmployees();
+    }
+
+    function onStoreChange(val) {
+        currentStoreId = val || null;
+        loadActive();
+    }
+
+    async function loadStores() {
+        const rows = await fetch('/api/stores').then(r => r.json());
+        const sel = document.getElementById('storeSelector');
+        sel.innerHTML = rows.map(r => `<option value="${r.id}">#${r.id} — ${r.name}</option>`).join('');
+        if (rows.length > 0) {
+            currentStoreId = String(rows[0].id);
+            sel.value = currentStoreId;
+            loadActive();
+        }
+    }
+
+    async function loadActive() {
+        if (!currentStoreId) return;
+        const res = await api('/api/till/sessions/active');
+        const tbody = document.getElementById('activeSessionsBody');
+        const sessions = res.sessions || [];
+
+        // stat cards
+        const stats = document.getElementById('activeStatCards');
+        const totalExp = sessions.reduce((s, x) => s + Number(x.expected_cash || 0), 0);
+        const held = sessions.filter(s => s.status === 'HELD').length;
+        stats.innerHTML = `
+            <div class="stat-card"><div class="lbl">Active Registers</div><div class="val">${sessions.length}</div><div class="sub">currently open or held</div></div>
+            <div class="stat-card"><div class="lbl">Expected Cash in Drawers</div><div class="val">${fmt(totalExp)}</div><div class="sub">sum of all active sessions</div></div>
+            <div class="stat-card"><div class="lbl">Held Sessions</div><div class="val" style="color:${held > 0 ? '#f59e0b' : '#fff'}">${held}</div><div class="sub">needs manager attention</div></div>
+        `;
+
+        if (sessions.length === 0) {
+            tbody.innerHTML = '<tr class="tbl-empty"><td colspan="10">No active sessions.</td></tr>';
+        } else {
+            tbody.innerHTML = sessions.map(s => `
+                <tr>
+                    <td><strong>${s.register_id}</strong></td>
+                    <td>${s.eid_name || ''} <span style="color:#94a3b8">(${s.eid})</span></td>
+                    <td>${fmtDt(s.opened_at)}</td>
+                    <td>${fmt(s.starting_bank)}</td>
+                    <td>${fmt(s.cash_sales)}</td>
+                    <td>${fmt(s.cash_refunds)}</td>
+                    <td>${fmt(s.pickups_total)}</td>
+                    <td><strong>${fmt(s.expected_cash)}</strong></td>
+                    <td><span class="pill ${s.status}">${s.status}</span></td>
+                    <td>
+                        <button class="action-btn primary" onclick="openReconcile(${s.id})">View</button>
+                        <button class="action-btn danger" onclick="openForceClose(${s.id}, '${s.register_id}', ${s.expected_cash})">Force Close</button>
+                    </td>
+                </tr>
+            `).join('');
+        }
+
+        // Poll refresh every 15s while on the active tab
+        clearInterval(activeRefreshTimer);
+        if (document.getElementById('module-till-active').style.display !== 'none') {
+            activeRefreshTimer = setInterval(loadActive, 15000);
+        }
+    }
+
+    async function loadHistory() {
+        if (!currentStoreId) return;
+        const days = document.getElementById('histDays').value;
+        const eid = document.getElementById('histEid').value.trim();
+        const reg = document.getElementById('histRegister').value.trim();
+        const params = new URLSearchParams({ days });
+        if (eid) params.set('eid', eid);
+        if (reg) params.set('register_id', reg);
+        const res = await api('/api/till/sessions?' + params.toString());
+        const tbody = document.getElementById('historyBody');
+        const rows = (res.sessions || []).filter(s => s.status !== 'OPEN' && s.status !== 'HELD');
+        if (rows.length === 0) {
+            tbody.innerHTML = '<tr class="tbl-empty"><td colspan="10">No closed sessions in that window.</td></tr>';
+        } else {
+            tbody.innerHTML = rows.map(s => `
+                <tr>
+                    <td>#${s.id}</td>
+                    <td>${s.eid_name || ''} <span style="color:#94a3b8">(${s.eid})</span></td>
+                    <td>${s.register_id}</td>
+                    <td>${fmtDt(s.opened_at)}</td>
+                    <td>${fmtDt(s.closed_at)}</td>
+                    <td>${fmt(s.expected_cash)}</td>
+                    <td>${fmt(s.actual_cash)}</td>
+                    <td class="${overCls(s.over_short)}">${overLabel(s.over_short)}</td>
+                    <td><span class="pill ${s.status}">${s.status}</span></td>
+                    <td><button class="action-btn primary" onclick="openReconcile(${s.id})">Reconcile</button></td>
+                </tr>
+            `).join('');
+        }
+    }
+
+    async function openReconcile(sessionId) {
+        const overlay = document.getElementById('reconcileOverlay');
+        const box = document.getElementById('reconcileBox');
+        overlay.classList.add('open');
+        box.innerHTML = '<span class="spinner"></span> Loading…';
+        const res = await api('/api/till/sessions/' + sessionId);
+        if (!res.success) { box.innerHTML = 'Error: ' + res.message; return; }
+        const s = res.session;
+        const events = res.events || [];
+        const cmds = res.commands || [];
+        box.innerHTML = `
+            <h2>Session #${s.id} — ${s.register_id}</h2>
+            <div class="sub">${s.eid_name || ''} (${s.eid}) · <span class="pill ${s.status}">${s.status}</span></div>
+            <div class="kv-grid">
+                <div class="k">Opened</div><div class="v">${fmtDt(s.opened_at)}</div>
+                <div class="k">Closed</div><div class="v">${fmtDt(s.closed_at)}</div>
+                <div class="k">Starting bank</div><div class="v">${fmt(s.starting_bank)}</div>
+                <div class="k">+ Cash sales</div><div class="v">${fmt(s.cash_sales)}</div>
+                <div class="k">− Cash refunds</div><div class="v">${fmt(s.cash_refunds)}</div>
+                <div class="k">− Pickups to safe</div><div class="v">${fmt(s.pickups_total)}</div>
+                <div class="k"><strong>= Expected cash</strong></div><div class="v"><strong>${fmt(s.expected_cash)}</strong></div>
+                <div class="k">Actual counted</div><div class="v">${fmt(s.actual_cash)}</div>
+                <div class="k"><strong>Over / Short</strong></div><div class="v ${overCls(s.over_short)}"><strong>${overLabel(s.over_short)}</strong></div>
+                ${s.notes ? `<div class="k">Notes</div><div class="v" style="white-space:pre-wrap">${s.notes}</div>` : ''}
+            </div>
+            <h3 style="color:#ffd100; font-size:13px; margin:10px 0 6px;">Events (${events.length})</h3>
+            <table class="mini-tbl">
+                <thead><tr><th>Time</th><th>Type</th><th>Amount</th><th>Note / Receipt</th><th>Auth</th></tr></thead>
+                <tbody>${events.length === 0 ? '<tr><td colspan="5" style="color:#64748b; padding:10px;">No events recorded.</td></tr>' :
+                    events.map(e => `
+                        <tr>
+                            <td>${fmtDt(e.occurred_at)}</td>
+                            <td>${e.event_type}</td>
+                            <td>${e.event_type === 'SALE' ? '+' : (e.event_type === 'REFUND' || e.event_type === 'PICKUP' ? '−' : '')}${fmt(e.amount)}</td>
+                            <td>${e.note || e.receipt_id || ''}</td>
+                            <td>${e.authorized_by || ''}</td>
+                        </tr>`).join('')
+                }</tbody>
+            </table>
+            ${cmds.length > 0 ? `
+                <h3 style="color:#ffd100; font-size:13px; margin:14px 0 6px;">Force-close commands</h3>
+                <table class="mini-tbl">
+                    <thead><tr><th>Time</th><th>Requested by</th><th>Actual cash</th><th>Status</th><th>Applied at</th></tr></thead>
+                    <tbody>${cmds.map(c => `
+                        <tr>
+                            <td>${fmtDt(c.requested_at)}</td>
+                            <td>${c.requested_by_eid}</td>
+                            <td>${fmt(c.actual_cash)}</td>
+                            <td><span class="pill ${c.status}">${c.status}</span></td>
+                            <td>${fmtDt(c.applied_at)}</td>
+                        </tr>`).join('')}</tbody>
+                </table>` : ''}
+            <div style="margin-top:20px; display:flex; gap:10px; justify-content:flex-end;">
+                <button class="action-btn subtle" onclick="closeOverlay('reconcileOverlay')">Close</button>
+                <button class="action-btn primary" onclick="printShiftReport(${s.id})">🖨 Print Shift Report</button>
+            </div>
+        `;
+    }
+
+    async function printShiftReport(id) {
+        const res = await api('/api/till/sessions/' + id + '/print-shift-report', { method: 'POST', body: '{}' });
+        alert(res.success ? 'Sent to HP4155.' : 'Print failed: ' + res.message);
+    }
+
+    function openForceClose(sessionId, registerId, expectedCash) {
+        const overlay = document.getElementById('forceCloseOverlay');
+        document.getElementById('forceCloseBox').innerHTML = `
+            <h2>Force Close Session</h2>
+            <div class="sub">Register ${registerId} · Expected cash ${fmt(expectedCash)}</div>
+            <p style="color:#cbd5e1; font-size:13px; line-height:1.5;">
+                This queues a force-close for dgPOS to apply on its next poll (~60s). If you enter an actual cash amount,
+                the over/short will be computed. Leave blank to close without a count.
+            </p>
+            <div style="margin: 14px 0;">
+                <label style="color:#94a3b8; font-size:12px;">Actual cash counted (optional):</label><br>
+                <input id="fcActual" type="number" step="0.01" placeholder="leave blank to skip"
+                       style="padding:8px; background:#0f172a; border:1px solid #334155; color:#fff; width:200px; margin-top:4px; border-radius:4px;">
+            </div>
+            <div style="margin: 14px 0;">
+                <label style="color:#94a3b8; font-size:12px;">Note (optional):</label><br>
+                <input id="fcNote" type="text" placeholder="e.g. employee left without Z-out"
+                       style="padding:8px; background:#0f172a; border:1px solid #334155; color:#fff; width:100%; margin-top:4px; border-radius:4px;">
+            </div>
+            <div style="margin-top:20px; display:flex; gap:10px; justify-content:flex-end;">
+                <button class="action-btn subtle" onclick="closeOverlay('forceCloseOverlay')">Cancel</button>
+                <button class="action-btn danger" onclick="submitForceClose(${sessionId})">Queue Force Close</button>
+            </div>
+        `;
+        overlay.classList.add('open');
+    }
+
+    async function submitForceClose(sessionId) {
+        const actual = document.getElementById('fcActual').value;
+        const note = document.getElementById('fcNote').value;
+        const res = await api('/api/till/sessions/' + sessionId + '/force-close', {
+            method: 'POST',
+            body: JSON.stringify({ actual_cash: actual === '' ? null : Number(actual), note: note || null })
+        });
+        if (res.success) {
+            alert('Queued. dgPOS will apply on next poll.');
+            closeOverlay('forceCloseOverlay');
+            loadActive();
+        } else {
+            alert('Failed: ' + (res.message || 'unknown error'));
+        }
+    }
+
+    function closeOverlay(id) { document.getElementById(id).classList.remove('open'); }
+
+    async function loadGraphs() {
+        if (!currentStoreId) return;
+        const days = document.getElementById('graphDays').value;
+        const [byDay, byCashier, byRegister] = await Promise.all([
+            api(`/api/till/reports/over-short?days=${days}&group_by=day`),
+            api(`/api/till/reports/over-short?days=${days}&group_by=cashier`),
+            api(`/api/till/reports/over-short?days=${days}&group_by=register`),
+        ]);
+        drawChart('chartByDay', byDay.rows || [], 'line', 'Total over/short ($)');
+        drawChart('chartByCashier', byCashier.rows || [], 'bar', 'Avg over/short ($)');
+        drawChart('chartByRegister', byRegister.rows || [], 'bar', 'Total over/short ($)');
+    }
+
+    function drawChart(canvasId, rows, type, yLabel) {
+        const valKey = yLabel.startsWith('Total') ? 'total_over_short' : 'avg_over_short';
+        const labels = rows.map(r => r.label);
+        const data = rows.map(r => Number(r[valKey] || 0));
+        const colors = data.map(v => Math.abs(v) < 0.01 ? '#64748b' : v > 0 ? '#10b981' : '#ef4444');
+        if (charts[canvasId]) charts[canvasId].destroy();
+        charts[canvasId] = new Chart(document.getElementById(canvasId), {
+            type,
+            data: {
+                labels,
+                datasets: [{
+                    label: yLabel,
+                    data,
+                    backgroundColor: type === 'line' ? 'rgba(255,209,0,0.15)' : colors,
+                    borderColor: type === 'line' ? '#ffd100' : colors,
+                    borderWidth: 2,
+                    fill: type === 'line',
+                    tension: 0.25,
+                    pointBackgroundColor: colors,
+                    pointRadius: 4,
+                }]
+            },
+            options: {
+                responsive: true, maintainAspectRatio: false,
+                plugins: { legend: { labels: { color: '#cbd5e1' } } },
+                scales: {
+                    y: { ticks: { color: '#94a3b8', callback: v => '$' + v }, grid: { color: '#334155' } },
+                    x: { ticks: { color: '#94a3b8' }, grid: { color: '#1f2937' } }
+                }
+            }
+        });
+    }
+
+    async function loadEmployees() {
+        if (!currentStoreId) return;
+        const days = document.getElementById('empDays').value;
+        const res = await api('/api/till/employees?days=' + days);
+        const tbody = document.getElementById('employeesBody');
+        const rows = res.employees || [];
+        if (rows.length === 0) {
+            tbody.innerHTML = '<tr class="tbl-empty"><td colspan="7">No employee data.</td></tr>';
+            return;
+        }
+        tbody.innerHTML = rows.map(r => `
+            <tr>
+                <td><strong>${r.eid}</strong></td>
+                <td>${r.eid_name || ''}</td>
+                <td>${r.sessions}</td>
+                <td class="${overCls(r.total_over_short)}">${overLabel(r.total_over_short)}</td>
+                <td class="${overCls(r.avg_over_short)}">${overLabel(r.avg_over_short)}</td>
+                <td>${fmtDt(r.last_session)}</td>
+                <td><button class="action-btn primary" onclick="openEmpDetail('${r.eid}')">Details</button></td>
+            </tr>
+        `).join('');
+    }
+
+    async function openEmpDetail(eid) {
+        const overlay = document.getElementById('empDetailOverlay');
+        const box = document.getElementById('empDetailBox');
+        overlay.classList.add('open');
+        box.innerHTML = '<span class="spinner"></span> Loading…';
+        const days = document.getElementById('empDays').value;
+        const res = await api('/api/till/employees/' + encodeURIComponent(eid) + '?days=' + days);
+        if (!res.success) { box.innerHTML = 'Error: ' + res.message; return; }
+
+        // over/short trend
+        const closed = (res.sessions || []).filter(s => s.over_short != null).reverse();
+        box.innerHTML = `
+            <h2>${eid}</h2>
+            <div class="sub">${closed.length} closed sessions · last ${days} days</div>
+            <div style="height:220px; margin-bottom:18px;"><canvas id="empTrend"></canvas></div>
+            <h3 style="color:#ffd100; font-size:13px; margin:10px 0 6px;">Sessions</h3>
+            <table class="mini-tbl">
+                <thead><tr><th>ID</th><th>Register</th><th>Opened</th><th>Closed</th><th>Expected</th><th>Actual</th><th>Over/Short</th><th>Status</th></tr></thead>
+                <tbody>${(res.sessions || []).map(s => `
+                    <tr>
+                        <td>#${s.id}</td><td>${s.register_id}</td>
+                        <td>${fmtDt(s.opened_at)}</td><td>${fmtDt(s.closed_at)}</td>
+                        <td>${fmt(s.expected_cash)}</td><td>${fmt(s.actual_cash)}</td>
+                        <td class="${overCls(s.over_short)}">${overLabel(s.over_short)}</td>
+                        <td><span class="pill ${s.status}">${s.status}</span></td>
+                    </tr>`).join('')}</tbody>
+            </table>
+            <h3 style="color:#ffd100; font-size:13px; margin:14px 0 6px;">Recent Punches (${(res.punches || []).length})</h3>
+            <table class="mini-tbl">
+                <thead><tr><th>When</th><th>Action</th></tr></thead>
+                <tbody>${(res.punches || []).slice(0, 40).map(p => `
+                    <tr><td>${fmtDt(p.timestamp)}</td><td>${p.action}</td></tr>`).join('')}</tbody>
+            </table>
+            <div style="margin-top:16px; text-align:right;">
+                <button class="action-btn subtle" onclick="closeOverlay('empDetailOverlay')">Close</button>
+            </div>
+        `;
+
+        // draw per-employee trend
+        const labels = closed.map(s => new Date(s.closed_at).toLocaleDateString());
+        const data = closed.map(s => Number(s.over_short));
+        new Chart(document.getElementById('empTrend'), {
+            type: 'line',
+            data: { labels, datasets: [{
+                label: 'Over/short ($) per session',
+                data, borderColor: '#ffd100', backgroundColor: 'rgba(255,209,0,0.15)',
+                fill: true, tension: 0.3, pointRadius: 4,
+                pointBackgroundColor: data.map(v => v > 0 ? '#10b981' : (v < 0 ? '#ef4444' : '#64748b'))
+            }]},
+            options: {
+                responsive: true, maintainAspectRatio: false,
+                plugins: { legend: { labels: { color: '#cbd5e1' } } },
+                scales: {
+                    y: { ticks: { color: '#94a3b8', callback: v => '$' + v }, grid: { color: '#334155' } },
+                    x: { ticks: { color: '#94a3b8' }, grid: { color: '#1f2937' } }
+                }
+            }
+        });
+    }
+
+    loadStores();
+    </script>
+</body>
+</html>

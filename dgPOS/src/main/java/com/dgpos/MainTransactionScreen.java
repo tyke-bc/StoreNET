@@ -180,6 +180,7 @@ public class MainTransactionScreen {
                 if (selected != null) {
                     table.getItems().remove(selected);
                     DatabaseManager.logAction(eid, "ITEM_VOID", selected.getUpc());
+                    BackofficeBridge.logEvent("VOID", Math.abs(selected.getPriceValue()), "Item void: " + selected.getName(), null, null, eid);
                     updateTotals(table, totalsBlock);
                     table.getSelectionModel().clearSelection();
                 }
@@ -191,8 +192,11 @@ public class MainTransactionScreen {
         transVoidBtn.setOnAction(e -> {
             requireKeyHolder(primaryStage, eid, () -> {
                 if (!table.getItems().isEmpty()) {
+                    double voidedTotal = 0;
+                    for (ScannedItem it : table.getItems()) voidedTotal += Math.abs(it.getPriceValue());
                     table.getItems().clear();
                     DatabaseManager.logAction(eid, "TRANS_VOID", "ALL");
+                    BackofficeBridge.logEvent("VOID", voidedTotal, "Transaction voided", null, null, eid);
                     updateTotals(table, totalsBlock);
                 }
             });
@@ -358,6 +362,11 @@ public class MainTransactionScreen {
         long receiptId = DatabaseManager.createReceipt(eid, tenderType, total);
         String barcode = String.format("%020d", receiptId);
 
+        // Cash sales add to the drawer — the reconcile view uses this to build expected_cash.
+        if ("CASH".equals(tenderType)) {
+            BackofficeBridge.logEvent("SALE", total, null, String.valueOf(receiptId), null, eid);
+        }
+
         // 1. Print Receipt
         PrinterService.printReceipt(new java.util.ArrayList<>(table.getItems()), eid, tenderType, barcode);
         
@@ -485,20 +494,23 @@ public class MainTransactionScreen {
     private static void processRefunds(Stage owner, java.util.List<DatabaseManager.ScannedItemData> items, String originalTender, TableView<ScannedItem> mainTable, VBox totalsBlock, String eid) {
         if (items.isEmpty()) return;
 
+        double refundTotal = 0;
         for (DatabaseManager.ScannedItemData item : items) {
             mainTable.getItems().add(new ScannedItem(item.upc, item.sku, "REFUND: " + item.name, -item.price, item.price, item.saleId, item.taxable, 1));
             DatabaseManager.logAction(eid, "REFUND_ITEM", item.upc);
+            refundTotal += Math.abs(item.price);
         }
         updateTotals(mainTable, totalsBlock);
 
         // Refund Type Logic
         if (originalTender.equals("CARD")) {
-            showNotification(owner, "Card Refund Required", "Insert Customer Card", 
+            showNotification(owner, "Card Refund Required", "Insert Customer Card",
                 "Original purchase was CARD. Refund must go back to the original card. Please have the customer insert or swipe their card now.");
         } else {
-            // CASH
+            // CASH — drawer decreases, so tell the backoffice reconcile view.
+            BackofficeBridge.logEvent("REFUND", refundTotal, "Cash refund", null, null, eid);
             System.out.println("CASH DRAWER OPENED FOR REFUND");
-            showNotification(owner, "Refund Cash from Drawer", "Open Cash Drawer", 
+            showNotification(owner, "Refund Cash from Drawer", "Open Cash Drawer",
                 "Original purchase was CASH. Please provide the indicated total back to the customer.");
         }
     }
@@ -750,13 +762,20 @@ public class MainTransactionScreen {
         yesBtn.setPrefSize(100, 50);
         yesBtn.setOnAction(e -> {
             stage.close();
-            DatabaseManager.ZOutData data = DatabaseManager.getZOutData(eid);
-            PrinterService.printZOutReport(data);
-            DatabaseManager.logAction(eid, "ZOUT", "");
-            DatabaseManager.clearHeldDrawer();
-            DatabaseManager.logAction(eid, "LOGOUT", "");
-            PosLogin loginScreen = new PosLogin();
-            loginScreen.start(owner);
+            // Prompt the cashier to count the drawer — this is the "actual cash" the
+            // backoffice reconcile view compares against expected_cash.
+            showAmountDialog(owner, eid, "COUNT DRAWER",
+                "Enter the total cash in the drawer (including the starting bank).",
+                "#3b82f6", actualCash -> {
+                    DatabaseManager.ZOutData data = DatabaseManager.getZOutData(eid);
+                    PrinterService.printZOutReport(data);
+                    DatabaseManager.logAction(eid, "ZOUT", String.format("$%.2f", actualCash));
+                    BackofficeBridge.closeSession(actualCash, null);
+                    DatabaseManager.clearHeldDrawer();
+                    DatabaseManager.logAction(eid, "LOGOUT", "");
+                    PosLogin loginScreen = new PosLogin();
+                    loginScreen.start(owner);
+                });
         });
 
         Button noBtn = new Button("No");
@@ -891,6 +910,7 @@ public class MainTransactionScreen {
                 "#10b981", amount -> {
                     DatabaseManager.recordPickup(eid, amount, eid);
                     DatabaseManager.logAction(eid, "PICKUP", String.format("$%.2f", amount));
+                    BackofficeBridge.logEvent("PICKUP", amount, null, null, eid, eid);
                     showNotification(owner, "Pickup Recorded", "Success",
                         String.format("$%.2f removed from drawer.", amount));
                 });

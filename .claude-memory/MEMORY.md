@@ -14,3 +14,4 @@
 - [HHT audit 2026-04-17](project_hht_audit_2026_04_17.md) — no dead tabs anywhere; main remaining gap is unifying old screens to the DG-yellow header palette
 - [Extensions 2026-04-17](project_extensions_2026_04_17.md) — BOPIS short-pick reasons, POG reset history/HHT card, vendor visits check-in log, recurring tasks generator
 - [HHT reference-matching redesign](project_hht_reference_redesign.md) — Adjustments, Compliance, Cooler/Freezer Safety, Refrigeration Maintenance rebuilt to match real DG UHHT photos; new refrigeration_units table
+- [HHT hamburger = keyholder+](feedback_hht_role_gate.md) — SAs should not see the nav menu; currently NOT enforced in code (aspirational gate)

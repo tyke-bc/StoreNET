@@ -46,6 +46,14 @@ public class PosLogin extends Application {
     public void start(Stage primaryStage) {
         this.primaryStageRef = primaryStage;
 
+        // Start the backoffice force-close poller once per app lifetime. When a manager
+        // queues a force-close via the Store Menu, dgPOS clears its held-drawer flag so
+        // this register becomes immediately usable again.
+        BackofficeBridge.startForceClosePoller((cmdId, sessionId) -> {
+            DatabaseManager.clearHeldDrawer();
+            System.out.println("[BackofficeBridge] Applied force-close command " + cmdId + " for session " + sessionId);
+        });
+
         BorderPane root = new BorderPane();
         root.getStyleClass().add("root-pane");
 
@@ -409,6 +417,9 @@ public class PosLogin extends Application {
         updateUIForState();
         warningLabel.setText("LOGIN SUCCESSFUL!");
 
+        // Inform the backoffice that a till session is opening on this register.
+        BackofficeBridge.startSession(user.eid, user.name, DatabaseManager.getStartingBank());
+
         PauseTransition pause = new PauseTransition(Duration.seconds(1.0));
         pause.setOnFinished(e -> MainTransactionScreen.show(primaryStageRef, user.eid));
         pause.play();
@@ -439,6 +450,7 @@ public class PosLogin extends Application {
             default -> "CLOCK_IN";
         };
         DatabaseManager.logTimePunch(currentEid, dbAction);
+        BackofficeBridge.logPunch(currentEid, dbAction);
         displayTemporaryMessage(action.toUpperCase() + " SUCCESSFUL!", State.LOGIN_EID);
     }
 

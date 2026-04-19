@@ -9,7 +9,10 @@ Two surveys run 2026-04-17 against the HHT app and dashboard.
 ## Non-functional-tab audit: clean
 Every nav drawer entry on the HHT and every left-nav module on the dashboard is fully wired. No "Coming Soon" else-branch is reachable. Only quasi-stub: the Home screen's "General" tab shows hardcoded "UNASSIGNED" / "CORE" values, but that's intentional display, not a TODO.
 
-## Visual consistency: header palette is the gap
+## Status (2026-04-18): header pass SHIPPED
+`DGScreenHeader` + `DGTabHeader` composables added to ScanScreen.kt 2026-04-18 and wired into all seven in-scope screens (Home, Counts/Recalls, Cycle Count, Receiving, Transfers, Review, Nones & Tons, PRP Returns). Commit `e61eea9`. The four redesigned screens (Adjustments/Compliance/Cooler-Freezer/Refrigeration) were left alone as intended. If you touch more HHT screens later, prefer these helpers over hand-rolled headers.
+
+## Visual consistency: header palette is the gap (historical — for context)
 The four screens redesigned in `project_hht_reference_redesign.md` (Adjustments, Compliance, Cooler/Freezer Safety, Refrigeration Maintenance) match the real DG UHHT photos in `handheld_assets/_jpg/IMG_15XX.jpg`. The OLDER screens still use a mixed palette:
 
 - Real DG UHHT uses **yellow** (#FFC107 range) for header bars brand-wide.

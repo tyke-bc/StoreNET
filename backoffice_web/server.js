@@ -410,6 +410,70 @@ const storeContext = async (req, res, next) => {
                 timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             )`);
 
+            // ---------- TILL & CASH (Store Menu — ingested from dgPOS) ----------
+            // One row per cashier till session. Opened on login to a register, closed on Z-Out
+            // (normal close) or a manager force-close. expected_cash is a running total computed
+            // from events; actual_cash is what the cashier counted at close. over_short is the delta.
+            await pool.query(`CREATE TABLE IF NOT EXISTS till_sessions (
+                id INT AUTO_INCREMENT PRIMARY KEY,
+                register_id VARCHAR(50) NOT NULL,
+                eid VARCHAR(50) CHARACTER SET utf8mb4 COLLATE utf8mb4_0900_ai_ci NOT NULL,
+                eid_name VARCHAR(100),
+                opened_at DATETIME NOT NULL,
+                closed_at DATETIME NULL,
+                starting_bank DECIMAL(10,2) DEFAULT 0.00,
+                cash_sales DECIMAL(10,2) DEFAULT 0.00,
+                cash_refunds DECIMAL(10,2) DEFAULT 0.00,
+                pickups_total DECIMAL(10,2) DEFAULT 0.00,
+                expected_cash DECIMAL(10,2) DEFAULT 0.00,
+                actual_cash DECIMAL(10,2) NULL,
+                over_short DECIMAL(10,2) NULL,
+                status ENUM('OPEN','CLOSED','FORCE_CLOSED','HELD') DEFAULT 'OPEN',
+                notes VARCHAR(500) NULL,
+                INDEX idx_ts_eid (eid),
+                INDEX idx_ts_register (register_id),
+                INDEX idx_ts_status (status),
+                INDEX idx_ts_opened (opened_at)
+            )`);
+
+            // Every money-touching event inside a till session. Types: PICKUP (drop to safe),
+            // REFUND (cash refund out), VOID (voided transaction), SALE_SUMMARY (periodic cash
+            // running-total from POS). Used to render the reconcile timeline + feed expected_cash.
+            await pool.query(`CREATE TABLE IF NOT EXISTS till_session_events (
+                id INT AUTO_INCREMENT PRIMARY KEY,
+                session_id INT NULL,
+                register_id VARCHAR(50) NOT NULL,
+                eid VARCHAR(50) CHARACTER SET utf8mb4 COLLATE utf8mb4_0900_ai_ci NOT NULL,
+                event_type ENUM('PICKUP','REFUND','VOID','SALE','CLOCK_IN','CLOCK_OUT','BREAK_IN','BREAK_OUT') NOT NULL,
+                amount DECIMAL(10,2) DEFAULT 0.00,
+                authorized_by VARCHAR(50) NULL,
+                receipt_id VARCHAR(50) NULL,
+                note VARCHAR(255) NULL,
+                occurred_at DATETIME NOT NULL,
+                INDEX idx_tse_session (session_id),
+                INDEX idx_tse_type (event_type),
+                INDEX idx_tse_time (occurred_at),
+                FOREIGN KEY (session_id) REFERENCES till_sessions(id) ON DELETE SET NULL
+            )`);
+
+            // Manager-initiated force-close commands. Backoffice inserts PENDING; dgPOS polls,
+            // applies (clears held drawer + closes session), acks with APPLIED. Applying store
+            // an actual_cash value if the manager chose to enter a count; NULL means "just close".
+            await pool.query(`CREATE TABLE IF NOT EXISTS force_close_commands (
+                id INT AUTO_INCREMENT PRIMARY KEY,
+                session_id INT NOT NULL,
+                register_id VARCHAR(50) NOT NULL,
+                actual_cash DECIMAL(10,2) NULL,
+                note VARCHAR(255) NULL,
+                requested_by_eid VARCHAR(50) NOT NULL,
+                requested_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                status ENUM('PENDING','APPLIED','CANCELLED') DEFAULT 'PENDING',
+                applied_at DATETIME NULL,
+                INDEX idx_fcc_status (status),
+                INDEX idx_fcc_register (register_id),
+                FOREIGN KEY (session_id) REFERENCES till_sessions(id) ON DELETE CASCADE
+            )`);
+
         } catch (e) { console.error(`Table init failed for store ${storeId}:`, e.message); }
 
         next();
@@ -5284,6 +5348,344 @@ app.delete('/api/refrigeration/units/:id', async (req, res) => {
     } catch (err) { res.status(500).json({ success: false, message: err.message }); }
 });
 
+// ---------- TILL & CASH (Store Menu) ----------
+// dgPOS is the source of truth for till activity; it POSTs here on each money-touching event.
+// Reconciliation, graphs, and manager force-closes live purely on the dashboard side.
+// Ingest endpoints are session-less (dgPOS can't log in). Manager-facing actions require
+// a logged-in SM/ASM session. Store selection is via X-Store-ID header from dgPOS.
+
+// Recompute a session's running totals + expected_cash from its events. Call after any
+// event insert so the Active Sessions view stays live.
+async function recomputeTillSession(pool, sessionId) {
+    const [[s]] = await pool.query('SELECT starting_bank FROM till_sessions WHERE id = ?', [sessionId]);
+    if (!s) return;
+    const [[sums]] = await pool.query(
+        `SELECT
+            COALESCE(SUM(CASE WHEN event_type='SALE' THEN amount ELSE 0 END), 0) AS sales,
+            COALESCE(SUM(CASE WHEN event_type='REFUND' THEN amount ELSE 0 END), 0) AS refunds,
+            COALESCE(SUM(CASE WHEN event_type='PICKUP' THEN amount ELSE 0 END), 0) AS pickups
+         FROM till_session_events WHERE session_id = ?`, [sessionId]);
+    const expected = Number(s.starting_bank) + Number(sums.sales) - Number(sums.refunds) - Number(sums.pickups);
+    await pool.query(
+        `UPDATE till_sessions SET cash_sales = ?, cash_refunds = ?, pickups_total = ?, expected_cash = ?
+         WHERE id = ?`, [sums.sales, sums.refunds, sums.pickups, expected.toFixed(2), sessionId]);
+}
+
+// --- INGEST (from dgPOS) ---
+
+// Open a new till session when a cashier logs into a register.
+app.post('/api/till/sessions/start', async (req, res) => {
+    const { register_id, eid, eid_name, starting_bank, opened_at } = req.body || {};
+    if (!register_id || !eid) return res.status(400).json({ success: false, message: 'register_id + eid required.' });
+    try {
+        // Close any stale OPEN sessions on this register (data hygiene).
+        await req.pool.query(
+            `UPDATE till_sessions SET status = 'HELD' WHERE register_id = ? AND status = 'OPEN'`,
+            [register_id]);
+        const [r] = await req.pool.query(
+            `INSERT INTO till_sessions (register_id, eid, eid_name, opened_at, starting_bank, expected_cash, status)
+             VALUES (?, ?, ?, ?, ?, ?, 'OPEN')`,
+            [register_id, eid, eid_name || null, opened_at || new Date(), starting_bank || 0, starting_bank || 0]);
+        res.json({ success: true, session_id: r.insertId });
+    } catch (err) { res.status(500).json({ success: false, message: err.message }); }
+});
+
+// Record a till event. Auto-links to the currently-open session on that register.
+app.post('/api/till/events', async (req, res) => {
+    const { register_id, eid, event_type, amount, authorized_by, receipt_id, note, occurred_at } = req.body || {};
+    if (!register_id || !event_type) return res.status(400).json({ success: false, message: 'register_id + event_type required.' });
+    try {
+        const [open] = await req.pool.query(
+            `SELECT id FROM till_sessions WHERE register_id = ? AND status = 'OPEN' ORDER BY opened_at DESC LIMIT 1`,
+            [register_id]);
+        const sessionId = open.length > 0 ? open[0].id : null;
+        await req.pool.query(
+            `INSERT INTO till_session_events (session_id, register_id, eid, event_type, amount, authorized_by, receipt_id, note, occurred_at)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+            [sessionId, register_id, eid || '', event_type, amount || 0, authorized_by || null, receipt_id || null, note || null, occurred_at || new Date()]);
+        if (sessionId) await recomputeTillSession(req.pool, sessionId);
+        res.json({ success: true, session_id: sessionId });
+    } catch (err) { res.status(500).json({ success: false, message: err.message }); }
+});
+
+// Close a session with an actual cash count (the cashier's Z-Out).
+app.post('/api/till/sessions/close', async (req, res) => {
+    const { session_id, register_id, actual_cash, closed_at, notes } = req.body || {};
+    if (!session_id && !register_id) return res.status(400).json({ success: false, message: 'session_id or register_id required.' });
+    try {
+        let sid = session_id;
+        if (!sid) {
+            const [open] = await req.pool.query(
+                `SELECT id FROM till_sessions WHERE register_id = ? AND status = 'OPEN' ORDER BY opened_at DESC LIMIT 1`,
+                [register_id]);
+            if (open.length === 0) return res.status(404).json({ success: false, message: 'No open session for register.' });
+            sid = open[0].id;
+        }
+        await recomputeTillSession(req.pool, sid);
+        const [[s]] = await req.pool.query('SELECT expected_cash FROM till_sessions WHERE id = ?', [sid]);
+        const actual = Number(actual_cash || 0);
+        const overShort = actual - Number(s.expected_cash);
+        await req.pool.query(
+            `UPDATE till_sessions SET status='CLOSED', closed_at=?, actual_cash=?, over_short=?, notes=COALESCE(?, notes)
+             WHERE id = ?`,
+            [closed_at || new Date(), actual, overShort.toFixed(2), notes || null, sid]);
+        res.json({ success: true, session_id: sid, over_short: overShort.toFixed(2) });
+    } catch (err) { res.status(500).json({ success: false, message: err.message }); }
+});
+
+// dgPOS polls this to see if any force-close is pending for its register. Static route
+// is registered BEFORE any /:id wildcards below.
+app.get('/api/till/pending-commands', async (req, res) => {
+    const { register_id } = req.query;
+    if (!register_id) return res.status(400).json({ success: false, message: 'register_id required.' });
+    try {
+        const [rows] = await req.pool.query(
+            `SELECT id, session_id, register_id, actual_cash, note, requested_by_eid, requested_at
+             FROM force_close_commands WHERE register_id = ? AND status = 'PENDING' ORDER BY requested_at ASC`,
+            [register_id]);
+        res.json({ success: true, commands: rows });
+    } catch (err) { res.status(500).json({ success: false, message: err.message }); }
+});
+
+// dgPOS acks that it applied a force-close command. Backoffice marks the session FORCE_CLOSED.
+app.post('/api/till/commands/:id/applied', async (req, res) => {
+    try {
+        const [[cmd]] = await req.pool.query('SELECT * FROM force_close_commands WHERE id = ?', [req.params.id]);
+        if (!cmd) return res.status(404).json({ success: false, message: 'Command not found.' });
+        if (cmd.status !== 'PENDING') return res.json({ success: true, already: true });
+        await recomputeTillSession(req.pool, cmd.session_id);
+        const [[s]] = await req.pool.query('SELECT expected_cash FROM till_sessions WHERE id = ?', [cmd.session_id]);
+        const actual = cmd.actual_cash == null ? null : Number(cmd.actual_cash);
+        const overShort = actual == null ? null : (actual - Number(s.expected_cash)).toFixed(2);
+        await req.pool.query(
+            `UPDATE till_sessions SET status='FORCE_CLOSED', closed_at=CURRENT_TIMESTAMP,
+                actual_cash=?, over_short=?,
+                notes = CONCAT(COALESCE(notes,''), IF(notes IS NULL OR notes='', '', '\n'), ?)
+             WHERE id = ?`,
+            [actual, overShort, `Force-closed by ${cmd.requested_by_eid}${cmd.note ? ': ' + cmd.note : ''}`, cmd.session_id]);
+        await req.pool.query(
+            `UPDATE force_close_commands SET status='APPLIED', applied_at=CURRENT_TIMESTAMP WHERE id = ?`,
+            [cmd.id]);
+        res.json({ success: true });
+    } catch (err) { res.status(500).json({ success: false, message: err.message }); }
+});
+
+// --- QUERY (for dashboard) ---
+
+// Static routes FIRST.
+
+app.get('/api/till/sessions/active', async (req, res) => {
+    try {
+        const [rows] = await req.pool.query(
+            `SELECT * FROM till_sessions WHERE status IN ('OPEN','HELD') ORDER BY opened_at DESC`);
+        for (const r of rows) await recomputeTillSession(req.pool, r.id);
+        const [refreshed] = await req.pool.query(
+            `SELECT * FROM till_sessions WHERE status IN ('OPEN','HELD') ORDER BY opened_at DESC`);
+        res.json({ success: true, sessions: refreshed });
+    } catch (err) { res.status(500).json({ success: false, message: err.message }); }
+});
+
+app.get('/api/till/sessions', async (req, res) => {
+    const days = Math.min(parseInt(req.query.days || '30', 10), 365);
+    const eid = req.query.eid || null;
+    const register = req.query.register_id || null;
+    const status = req.query.status || null;
+    try {
+        const where = ['opened_at >= DATE_SUB(NOW(), INTERVAL ? DAY)'];
+        const params = [days];
+        if (eid) { where.push('eid = ?'); params.push(eid); }
+        if (register) { where.push('register_id = ?'); params.push(register); }
+        if (status) { where.push('status = ?'); params.push(status); }
+        const [rows] = await req.pool.query(
+            `SELECT * FROM till_sessions WHERE ${where.join(' AND ')} ORDER BY opened_at DESC LIMIT 500`, params);
+        res.json({ success: true, sessions: rows });
+    } catch (err) { res.status(500).json({ success: false, message: err.message }); }
+});
+
+// Over/short aggregation for graphs. group_by: cashier | day | register.
+app.get('/api/till/reports/over-short', async (req, res) => {
+    const days = Math.min(parseInt(req.query.days || '30', 10), 365);
+    const groupBy = ['cashier', 'day', 'register'].includes(req.query.group_by) ? req.query.group_by : 'day';
+    try {
+        let select;
+        if (groupBy === 'cashier') select = `eid AS key_val, COALESCE(MAX(eid_name), eid) AS label`;
+        else if (groupBy === 'register') select = `register_id AS key_val, register_id AS label`;
+        else select = `DATE(closed_at) AS key_val, DATE_FORMAT(closed_at, '%Y-%m-%d') AS label`;
+        const [rows] = await req.pool.query(
+            `SELECT ${select},
+                SUM(over_short) AS total_over_short,
+                AVG(over_short) AS avg_over_short,
+                COUNT(*) AS session_count
+             FROM till_sessions
+             WHERE status IN ('CLOSED','FORCE_CLOSED')
+               AND closed_at >= DATE_SUB(NOW(), INTERVAL ? DAY)
+               AND over_short IS NOT NULL
+             GROUP BY key_val, label ORDER BY key_val ASC`, [days]);
+        res.json({ success: true, group_by: groupBy, rows });
+    } catch (err) { res.status(500).json({ success: false, message: err.message }); }
+});
+
+// Roster of everyone who's had a till session, with quick stats.
+app.get('/api/till/employees', async (req, res) => {
+    const days = Math.min(parseInt(req.query.days || '30', 10), 365);
+    try {
+        const [rows] = await req.pool.query(
+            `SELECT eid, MAX(eid_name) AS eid_name,
+                    COUNT(*) AS sessions,
+                    SUM(over_short) AS total_over_short,
+                    AVG(over_short) AS avg_over_short,
+                    MAX(closed_at) AS last_session
+             FROM till_sessions
+             WHERE status IN ('CLOSED','FORCE_CLOSED')
+               AND closed_at >= DATE_SUB(NOW(), INTERVAL ? DAY)
+               AND over_short IS NOT NULL
+             GROUP BY eid ORDER BY total_over_short ASC`, [days]);
+        res.json({ success: true, employees: rows });
+    } catch (err) { res.status(500).json({ success: false, message: err.message }); }
+});
+
+// Detail view for one employee: per-session over/short + punch history.
+app.get('/api/till/employees/:eid', async (req, res) => {
+    const days = Math.min(parseInt(req.query.days || '30', 10), 365);
+    try {
+        const [sessions] = await req.pool.query(
+            `SELECT id, register_id, opened_at, closed_at, expected_cash, actual_cash, over_short, status
+             FROM till_sessions
+             WHERE eid = ? AND opened_at >= DATE_SUB(NOW(), INTERVAL ? DAY)
+             ORDER BY opened_at DESC`, [req.params.eid, days]);
+        const [punches] = await req.pool.query(
+            `SELECT action, timestamp FROM time_punches
+             WHERE eid = ? AND timestamp >= DATE_SUB(NOW(), INTERVAL ? DAY)
+             ORDER BY timestamp DESC LIMIT 200`, [req.params.eid, days]);
+        res.json({ success: true, eid: req.params.eid, sessions, punches });
+    } catch (err) { res.status(500).json({ success: false, message: err.message }); }
+});
+
+// /:id wildcards LAST.
+
+app.get('/api/till/sessions/:id', async (req, res) => {
+    try {
+        await recomputeTillSession(req.pool, req.params.id);
+        const [[session]] = await req.pool.query('SELECT * FROM till_sessions WHERE id = ?', [req.params.id]);
+        if (!session) return res.status(404).json({ success: false, message: 'Session not found.' });
+        const [events] = await req.pool.query(
+            'SELECT * FROM till_session_events WHERE session_id = ? ORDER BY occurred_at ASC',
+            [req.params.id]);
+        const [commands] = await req.pool.query(
+            'SELECT * FROM force_close_commands WHERE session_id = ? ORDER BY requested_at ASC',
+            [req.params.id]);
+        res.json({ success: true, session, events, commands });
+    } catch (err) { res.status(500).json({ success: false, message: err.message }); }
+});
+
+// --- MANAGER ACTIONS (SM/ASM only) ---
+
+// Role gate. Accepts SM, ASM, super_admin, admin. SAs and unknowns are blocked.
+const requireManagerRole = (req, res, next) => {
+    if (!req.session.userId) return res.status(401).json({ success: false, message: 'Login required.' });
+    const role = (req.session.role || '').toLowerCase();
+    const allowed = ['sm', 'asm', 'super_admin', 'admin'];
+    if (!allowed.includes(role)) return res.status(403).json({ success: false, message: 'Manager role required.' });
+    next();
+};
+
+// Queue a force-close command for dgPOS to apply.
+app.post('/api/till/sessions/:id/force-close', requireManagerRole, async (req, res) => {
+    const { actual_cash, note } = req.body || {};
+    try {
+        const [[session]] = await req.pool.query('SELECT register_id, status FROM till_sessions WHERE id = ?', [req.params.id]);
+        if (!session) return res.status(404).json({ success: false, message: 'Session not found.' });
+        if (session.status === 'CLOSED' || session.status === 'FORCE_CLOSED') {
+            return res.status(400).json({ success: false, message: `Session already ${session.status}.` });
+        }
+        const [existing] = await req.pool.query(
+            `SELECT id FROM force_close_commands WHERE session_id = ? AND status = 'PENDING' LIMIT 1`,
+            [req.params.id]);
+        if (existing.length > 0) return res.status(409).json({ success: false, message: 'Force-close already pending.', command_id: existing[0].id });
+        const [r] = await req.pool.query(
+            `INSERT INTO force_close_commands (session_id, register_id, actual_cash, note, requested_by_eid)
+             VALUES (?, ?, ?, ?, ?)`,
+            [req.params.id, session.register_id, actual_cash == null ? null : Number(actual_cash), note || null, req.session.eid || 'unknown']);
+        res.json({ success: true, command_id: r.insertId });
+    } catch (err) { res.status(500).json({ success: false, message: err.message }); }
+});
+
+// Cancel a still-pending force-close.
+app.post('/api/till/commands/:id/cancel', requireManagerRole, async (req, res) => {
+    try {
+        const [r] = await req.pool.query(
+            `UPDATE force_close_commands SET status='CANCELLED' WHERE id = ? AND status = 'PENDING'`,
+            [req.params.id]);
+        res.json({ success: true, changed: r.affectedRows });
+    } catch (err) { res.status(500).json({ success: false, message: err.message }); }
+});
+
+// Build + print a one-page shift report PDF to the HP4155 CUPS queue.
+function buildShiftReportPDF(session, events, storeId) {
+    return new Promise((resolve, reject) => {
+        const doc = new PDFDocument({ size: 'LETTER', margins: { top: 50, bottom: 50, left: 60, right: 60 } });
+        const chunks = [];
+        doc.on('data', c => chunks.push(c));
+        doc.on('end', () => resolve(Buffer.concat(chunks)));
+        doc.on('error', reject);
+        const fmt = (n) => (n == null ? '—' : `$${Number(n).toFixed(2)}`);
+        const fmtDt = (d) => (d ? new Date(d).toLocaleString() : '—');
+        doc.fontSize(18).text('SHIFT RECONCILE REPORT', { align: 'center' });
+        doc.moveDown(0.3);
+        doc.fontSize(10).fillColor('#555').text(`Store #${storeId}   ·   Session #${session.id}   ·   Printed ${new Date().toLocaleString()}`, { align: 'center' });
+        doc.moveDown(1).fillColor('#000');
+        doc.fontSize(12);
+        doc.text(`Cashier:      ${session.eid_name || session.eid} (${session.eid})`);
+        doc.text(`Register:     ${session.register_id}`);
+        doc.text(`Opened:       ${fmtDt(session.opened_at)}`);
+        doc.text(`Closed:       ${fmtDt(session.closed_at)}`);
+        doc.text(`Status:       ${session.status}`);
+        doc.moveDown(0.5);
+        doc.fontSize(13).text('Cash Math', { underline: true });
+        doc.fontSize(12);
+        doc.text(`Starting bank:       ${fmt(session.starting_bank)}`);
+        doc.text(`+ Cash sales:        ${fmt(session.cash_sales)}`);
+        doc.text(`− Cash refunds:      ${fmt(session.cash_refunds)}`);
+        doc.text(`− Pickups to safe:   ${fmt(session.pickups_total)}`);
+        doc.text(`= Expected cash:     ${fmt(session.expected_cash)}`);
+        doc.moveDown(0.2);
+        doc.text(`Actual counted:      ${fmt(session.actual_cash)}`);
+        const os = session.over_short == null ? null : Number(session.over_short);
+        const osLabel = os == null ? '—' : (os > 0 ? `OVER ${fmt(os)}` : os < 0 ? `SHORT ${fmt(Math.abs(os))}` : 'EVEN');
+        doc.fillColor(os == null ? '#000' : (Math.abs(os) < 0.01 ? '#16a34a' : '#dc2626'))
+           .fontSize(14).text(`Over / short:        ${osLabel}`).fillColor('#000').fontSize(12);
+        doc.moveDown(0.8);
+        doc.fontSize(13).text('Events', { underline: true });
+        doc.fontSize(10);
+        if (events.length === 0) doc.fillColor('#666').text('(none)').fillColor('#000');
+        for (const e of events) {
+            const amt = (e.event_type === 'SALE' ? '+' : '−') + `$${Number(e.amount).toFixed(2)}`;
+            doc.text(`${fmtDt(e.occurred_at).padEnd(22)}  ${e.event_type.padEnd(10)}  ${amt.padStart(10)}  ${e.note || e.receipt_id || ''}`);
+        }
+        if (session.notes) {
+            doc.moveDown(0.6).fontSize(11).fillColor('#555').text('Notes:').fillColor('#000').text(session.notes);
+        }
+        doc.moveDown(2);
+        doc.fontSize(11);
+        doc.text('Cashier signature: ____________________________      Manager signature: ____________________________');
+        doc.end();
+    });
+}
+
+app.post('/api/till/sessions/:id/print-shift-report', requireAuth, async (req, res) => {
+    try {
+        const [[session]] = await req.pool.query('SELECT * FROM till_sessions WHERE id = ?', [req.params.id]);
+        if (!session) return res.status(404).json({ success: false, message: 'Session not found.' });
+        await recomputeTillSession(req.pool, session.id);
+        const [[refreshed]] = await req.pool.query('SELECT * FROM till_sessions WHERE id = ?', [req.params.id]);
+        const [events] = await req.pool.query(
+            'SELECT * FROM till_session_events WHERE session_id = ? ORDER BY occurred_at ASC', [req.params.id]);
+        const pdf = await buildShiftReportPDF(refreshed, events, req.storeId);
+        await sendToLaserPrinter(pdf);
+        res.json({ success: true, message: `Shift report sent to ${LASER_PRINTER_QUEUE}.` });
+    } catch (err) { res.status(500).json({ success: false, message: err.message }); }
+});
+
 // --- DG RESPOND ENTRY PAGE ---
 app.get('/respond', (req, res) => {
     if (!req.session.userId) return res.redirect('/');
@@ -5330,6 +5732,7 @@ app.get('/respond', (req, res) => {
 })();
 
 app.get('/dashboard', (req, res) => { if (!req.session.userId) return res.redirect('/'); res.sendFile(path.join(__dirname, 'dashboard.html')); });
+app.get('/store-menu', (req, res) => { if (!req.session.userId) return res.redirect('/'); res.sendFile(path.join(__dirname, 'store-menu.html')); });
 app.get('*', (req, res) => res.sendFile(path.join(__dirname, 'index.html')));
 
 app.listen(PORT, () => {
