@@ -520,14 +520,7 @@ fun ScanScreen(storeId: String, onBackToLauncher: () -> Unit) {
                                     }
                                 }
                             }
-                            Row(modifier = Modifier.fillMaxWidth().background(Color(0xFFD6D6D6)).border(BorderStroke(1.dp, Color.Gray))) {
-                                tabs.forEachIndexed { index, title ->
-                                    val isSelected = selectedTab == index
-                                    Box(modifier = Modifier.weight(1f).background(if (isSelected) Color(0xFFE8E8E8) else Color.Transparent).clickable { selectedTab = index }.padding(vertical = 12.dp), contentAlignment = Alignment.Center) {
-                                        Text(text = title, fontSize = 14.sp, color = if (isSelected) Color.Black else DGBlue)
-                                    }
-                                }
-                            }
+                            DGTabHeader(tabs = tabs, selectedIndex = selectedTab, onSelect = { selectedTab = it })
                             when (selectedTab) {
                                 0 -> ProductMainContent(storeId, upcInput, { upcInput = it }, item, isLoading, errorMessage, ::performSearch)
                                 1 -> SalesHistoryContent(storeId, item)
@@ -595,10 +588,7 @@ fun ScanScreen(storeId: String, onBackToLauncher: () -> Unit) {
                             )
                         }
                         "Counts / Recalls" -> {
-                            Row(modifier = Modifier.fillMaxWidth().background(Color(0xFFD6D6D6)).border(BorderStroke(1.dp, Color.Gray))) {
-                                Box(modifier = Modifier.weight(1f).background(Color(0xFFE8E8E8)).padding(vertical = 12.dp), contentAlignment = Alignment.Center) { Text("Precount", fontSize = 14.sp, color = Color.Black) }
-                                Spacer(modifier = Modifier.weight(3f))
-                            }
+                            DGScreenHeader(title = "Precount")
                             CountsRecallsContent(countsUpcInput, { countsUpcInput = it })
                         }
                         "Order Picking" -> {
@@ -720,16 +710,13 @@ fun ScanScreen(storeId: String, onBackToLauncher: () -> Unit) {
                             val listState = rememberLazyListState()
                             val countedCount = cycleCountItems.count { cycleCountCounts.containsKey(it.sku) }
                             Column(modifier = Modifier.fillMaxSize()) {
-                                // Header bar
-                                Surface(color = Color(0xFF1E3A5F), modifier = Modifier.fillMaxWidth()) {
-                                    Row(modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
-                                        Column {
-                                            Text(if (cycleCountSection.isNotEmpty()) "POG $cycleCountPogId · SEC $cycleCountSection" else "POG $cycleCountPogId", color = Color.White, fontWeight = FontWeight.Bold, fontSize = 15.sp)
-                                            if (cycleCountPogName.isNotEmpty()) Text(cycleCountPogName, color = Color.White.copy(alpha = 0.75f), fontSize = 12.sp)
-                                        }
-                                        Text("$countedCount / ${cycleCountItems.size} counted", color = Color(0xFF90CAF9), fontWeight = FontWeight.Bold, fontSize = 13.sp)
+                                DGScreenHeader(
+                                    title = if (cycleCountSection.isNotEmpty()) "POG $cycleCountPogId · SEC $cycleCountSection" else "POG $cycleCountPogId",
+                                    subtitle = cycleCountPogName.takeIf { it.isNotEmpty() },
+                                    trailing = {
+                                        Text("$countedCount / ${cycleCountItems.size} counted", color = Color.Black, fontWeight = FontWeight.Bold, fontSize = 13.sp)
                                     }
-                                }
+                                )
                                 when {
                                     cycleCountLoading -> Box(modifier = Modifier.weight(1f).fillMaxWidth(), contentAlignment = Alignment.Center) { CircularProgressIndicator() }
                                     cycleCountError != null -> Box(modifier = Modifier.weight(1f).fillMaxWidth(), contentAlignment = Alignment.Center) { Text("Error: $cycleCountError", color = Color.Red) }
@@ -1005,6 +992,61 @@ fun ScanScreen(storeId: String, onBackToLauncher: () -> Unit) {
     } // end CompositionLocalProvider
 }
 
+// ---------- DG UHHT SHARED HEADER (matches real device yellow header bar) ----------
+@Composable
+fun DGScreenHeader(
+    title: String,
+    subtitle: String? = null,
+    modifier: Modifier = Modifier,
+    trailing: @Composable (RowScope.() -> Unit)? = null
+) {
+    Surface(color = DGYellow, modifier = modifier.fillMaxWidth()) {
+        Row(
+            modifier = Modifier.padding(horizontal = 12.dp, vertical = 10.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Column(modifier = Modifier.weight(1f)) {
+                Text(title, color = Color.Black, fontWeight = FontWeight.Bold, fontSize = 15.sp)
+                if (!subtitle.isNullOrBlank()) {
+                    Text(subtitle, color = Color.Black.copy(alpha = 0.7f), fontSize = 12.sp)
+                }
+            }
+            trailing?.invoke(this)
+        }
+    }
+}
+
+@Composable
+fun DGTabHeader(
+    tabs: List<String>,
+    selectedIndex: Int,
+    onSelect: (Int) -> Unit,
+    modifier: Modifier = Modifier
+) {
+    Row(
+        modifier = modifier.fillMaxWidth().background(Color.White)
+            .border(BorderStroke(1.dp, Color(0xFFE2E8F0)))
+    ) {
+        tabs.forEachIndexed { i, t ->
+            val sel = i == selectedIndex
+            Box(
+                modifier = Modifier.weight(1f)
+                    .background(if (sel) DGYellow else Color.White)
+                    .clickable { onSelect(i) }
+                    .padding(vertical = 12.dp),
+                contentAlignment = Alignment.Center
+            ) {
+                Text(
+                    t, fontSize = 13.sp,
+                    color = Color.Black,
+                    fontWeight = if (sel) FontWeight.Bold else FontWeight.Normal,
+                    textAlign = TextAlign.Center
+                )
+            }
+        }
+    }
+}
+
 @Composable
 fun ReceivingBOLContent(
     storeId: String,
@@ -1024,9 +1066,9 @@ fun ReceivingBOLContent(
         finally { isLoading = false }
     }
 
-    Column(modifier = Modifier.fillMaxSize().padding(16.dp)) {
-        Text("Receiving Management", fontSize = 20.sp, fontWeight = FontWeight.Bold)
-        Spacer(modifier = Modifier.height(8.dp))
+    Column(modifier = Modifier.fillMaxSize()) {
+        DGScreenHeader(title = "Receiving Management")
+        Column(modifier = Modifier.fillMaxSize().padding(16.dp)) {
         Text("Scan a 15-digit BOL or select a pending manifest below.", color = Color.Gray, fontSize = 14.sp)
 
         Spacer(modifier = Modifier.height(16.dp))
@@ -1093,6 +1135,7 @@ fun ReceivingBOLContent(
                     }
                 }
             }
+        }
         }
     }
 }
@@ -1551,11 +1594,9 @@ fun TransfersContent(storeId: String) {
             if (r.success) currentItem = r.item else currentItem = null
         } catch (_: Exception) { currentItem = null }
     }
-    Column(modifier = Modifier.fillMaxSize().padding(16.dp).verticalScroll(rememberScrollState())) {
-        Surface(color = Color(0xFF1E3A5F), shape = RoundedCornerShape(4.dp)) {
-            Text("OUTBOUND TRANSFER REQUEST", color = Color.White, fontWeight = FontWeight.Bold, modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp))
-        }
-        Spacer(Modifier.height(10.dp))
+    Column(modifier = Modifier.fillMaxSize()) {
+        DGScreenHeader(title = "Outbound Transfer Request")
+        Column(modifier = Modifier.fillMaxSize().padding(16.dp).verticalScroll(rememberScrollState())) {
         Text("UPC / SKU", fontWeight = FontWeight.SemiBold, fontSize = 12.sp)
         Row(verticalAlignment = Alignment.CenterVertically) {
             BasicTextField(value = upc, onValueChange = { upc = it },
@@ -1611,6 +1652,7 @@ fun TransfersContent(storeId: String) {
                 Text(it, fontSize = 13.sp, modifier = Modifier.padding(10.dp))
             }
         }
+        }
     }
 }
 
@@ -1625,9 +1667,9 @@ fun ReviewContent(storeId: String) {
         catch (e: Exception) { err = e.message }
         finally { loading = false }
     }
-    Column(modifier = Modifier.fillMaxSize().padding(12.dp)) {
-        Text("Review — last 7 days", fontWeight = FontWeight.Bold, fontSize = 16.sp)
-        Spacer(Modifier.height(6.dp))
+    Column(modifier = Modifier.fillMaxSize()) {
+        DGScreenHeader(title = "Review — last 7 days")
+        Column(modifier = Modifier.fillMaxSize().padding(12.dp)) {
         when {
             loading -> Box(Modifier.fillMaxSize(), Alignment.Center) { CircularProgressIndicator() }
             err != null -> Text("Error: $err", color = Color.Red)
@@ -1668,6 +1710,7 @@ fun ReviewContent(storeId: String) {
                 }
             }
         }
+        }
     }
 }
 
@@ -1683,13 +1726,11 @@ fun NonesAndTonsContent(storeId: String) {
         try { data = RetrofitClient.instance.getMovers(storeId, days) } catch (_: Exception) {} finally { loading = false }
     }
     Column(modifier = Modifier.fillMaxSize()) {
-        Row(modifier = Modifier.fillMaxWidth().background(Color(0xFFD6D6D6))) {
-            listOf("Tons (Top Sellers)", "Nones (Dead Stock)").forEachIndexed { i, t ->
-                Box(modifier = Modifier.weight(1f).background(if (tab == i) Color(0xFFE8E8E8) else Color.Transparent).clickable { tab = i }.padding(vertical = 10.dp), contentAlignment = Alignment.Center) {
-                    Text(t, fontSize = 13.sp, color = if (tab == i) Color.Black else DGBlue)
-                }
-            }
-        }
+        DGTabHeader(
+            tabs = listOf("Tons (Top Sellers)", "Nones (Dead Stock)"),
+            selectedIndex = tab,
+            onSelect = { tab = it }
+        )
         Row(modifier = Modifier.padding(8.dp), verticalAlignment = Alignment.CenterVertically) {
             Text("Window:", fontSize = 12.sp); Spacer(Modifier.width(6.dp))
             listOf(7, 30, 90).forEach { d ->
@@ -3159,13 +3200,12 @@ fun PrpReturnsContent(storeId: String, scannedUpc: String, onScanConsumed: () ->
     }
 
     Column(modifier = Modifier.fillMaxSize()) {
-        // Header
-        Surface(color = PrpBrown, modifier = Modifier.fillMaxWidth()) {
-            Row(modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) {
-                Text("PRP RETURNS", color = Color.White, fontWeight = FontWeight.Bold, fontSize = 15.sp, modifier = Modifier.weight(1f))
-                if (batch != null) Text("Batch #${batch!!.id}  ·  ${items.size} lines", color = Color.White, fontSize = 12.sp)
+        DGScreenHeader(
+            title = "PRP Returns",
+            trailing = {
+                if (batch != null) Text("Batch #${batch!!.id}  ·  ${items.size} lines", color = Color.Black, fontSize = 12.sp)
             }
-        }
+        )
 
         if (loading) { Box(Modifier.fillMaxWidth().weight(1f), Alignment.Center) { CircularProgressIndicator() }; return@Column }
 
