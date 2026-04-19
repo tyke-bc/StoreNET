@@ -512,15 +512,38 @@ function landingForRole(role) {
 app.post('/api/login', async (req, res) => {
     const { username, password } = req.body;
     try {
+        // 1. Try the enterprise global_users table (DM / super_admin / admin — bcrypt hashed).
         const [rows] = await enterprisePool().query('SELECT * FROM global_users WHERE eid = ? OR username = ?', [username, username]);
         const user = rows[0];
-        if (!user) return res.status(401).json({ success: false, message: 'Invalid Credentials' });
-        const match = await bcrypt.compare(password, user.password);
-        if (match) {
-            req.session.userId = user.id;
-            req.session.eid = user.eid;
-            req.session.role = user.role;
-            return res.json({ success: true, role: user.role, redirect: landingForRole(user.role) });
+        if (user) {
+            const match = await bcrypt.compare(password, user.password);
+            if (match) {
+                req.session.userId = user.id;
+                req.session.eid = user.eid;
+                req.session.role = user.role;
+                req.session.currentStoreId = null;
+                return res.json({ success: true, role: user.role, redirect: landingForRole(user.role) });
+            }
+        }
+        // 2. Fall back to per-store `users` tables (SM / ASM / KH / SA — plain PIN, that's the
+        // same credential employees use on dgPOS + HHT). Search across every store; when a
+        // match is found, pin the session to that store so /store-menu lands in the right context.
+        const [stores] = await enterprisePool().query('SELECT id FROM stores');
+        for (const store of stores) {
+            try {
+                const pool = await getStorePool(store.id);
+                const [urows] = await pool.query(
+                    'SELECT eid, name, role FROM users WHERE eid = ? AND pin = ? LIMIT 1',
+                    [username, password]);
+                if (urows.length > 0) {
+                    const u = urows[0];
+                    req.session.userId = `store:${store.id}:${u.eid}`;
+                    req.session.eid = u.eid;
+                    req.session.role = u.role;
+                    req.session.currentStoreId = store.id;
+                    return res.json({ success: true, role: u.role, redirect: landingForRole(u.role) });
+                }
+            } catch (_) { /* per-store pool missing → skip */ }
         }
         res.status(401).json({ success: false, message: 'Invalid Credentials' });
     } catch (err) { res.status(500).json({ success: false, message: 'Database error' }); }
@@ -5603,7 +5626,7 @@ app.get('/api/till/sessions/:id', async (req, res) => {
 const requireManagerRole = (req, res, next) => {
     if (!req.session.userId) return res.status(401).json({ success: false, message: 'Login required.' });
     const role = (req.session.role || '').toLowerCase();
-    const allowed = ['sm', 'asm', 'super_admin', 'admin'];
+    const allowed = ['sm', 'asm', 'kh', 'super_admin', 'admin'];
     if (!allowed.includes(role)) return res.status(403).json({ success: false, message: 'Manager role required.' });
     next();
 };

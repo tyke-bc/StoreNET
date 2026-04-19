@@ -209,13 +209,23 @@
         }
     }
 
-    async function checkRole() {
-        try {
-            const me = await fetch('/api/me').then(r => r.json());
-            if (me && me.is_dm) document.getElementById('dmSwitchWrap').style.display = 'block';
-        } catch (_) { /* no switch button for non-DMs */ }
+    async function bootstrap() {
+        let me = {};
+        try { me = await fetch('/api/me').then(r => r.json()); } catch (_) {}
+        if (me && me.is_dm) {
+            document.getElementById('dmSwitchWrap').style.display = 'block';
+            // DM can freely switch stores.
+            loadStores();
+        } else {
+            // Non-DM: pinned to their home store via the session — hide selector and
+            // let storeContext resolve via req.session.currentStoreId on each request.
+            const wrap = document.getElementById('storeSelector').parentElement;
+            wrap.style.display = 'none';
+            currentStoreId = ''; // no X-Store-ID header; server falls back to session
+            loadActive();
+        }
     }
-    checkRole();
+    bootstrap();
 
     async function loadActive() {
         if (!currentStoreId) return;
