@@ -42,7 +42,7 @@ document.addEventListener('DOMContentLoaded', () => {
                     } else {
                         systemMessage.textContent = 'Login Successful. Accessing StoreNET...';
                         setTimeout(() => {
-                            window.location.href = '/dashboard';
+                            window.location.href = data.redirect || '/dashboard';
                         }, 800);
                     }
                 } else {

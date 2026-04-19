@@ -502,6 +502,13 @@ app.get('/api/stores', async (req, res) => {
     } catch (err) { res.status(500).json({ success: false, message: 'Enterprise DB Error' }); }
 });
 
+// Role-based landing decision. DM-tier (super_admin / admin) → district control;
+// everyone else lands on /store-menu.
+const DM_ROLES = ['super_admin', 'admin'];
+function landingForRole(role) {
+    return DM_ROLES.includes(String(role || '').toLowerCase()) ? '/dashboard' : '/store-menu';
+}
+
 app.post('/api/login', async (req, res) => {
     const { username, password } = req.body;
     try {
@@ -513,10 +520,22 @@ app.post('/api/login', async (req, res) => {
             req.session.userId = user.id;
             req.session.eid = user.eid;
             req.session.role = user.role;
-            return res.json({ success: true });
+            return res.json({ success: true, role: user.role, redirect: landingForRole(user.role) });
         }
         res.status(401).json({ success: false, message: 'Invalid Credentials' });
     } catch (err) { res.status(500).json({ success: false, message: 'Database error' }); }
+});
+
+// Lightweight "who am I" — the store-menu page uses this to decide whether to show
+// the "← District Control" switch button.
+app.get('/api/me', (req, res) => {
+    if (!req.session.userId) return res.status(401).json({ success: false });
+    res.json({
+        success: true,
+        eid: req.session.eid,
+        role: req.session.role,
+        is_dm: DM_ROLES.includes(String(req.session.role || '').toLowerCase())
+    });
 });
 
 app.get('/logout', (req, res) => { req.session.destroy(); res.redirect('/'); });
@@ -5731,7 +5750,12 @@ app.get('/respond', (req, res) => {
     } catch (e) { console.error("Initialization failed:", e.message); }
 })();
 
-app.get('/dashboard', (req, res) => { if (!req.session.userId) return res.redirect('/'); res.sendFile(path.join(__dirname, 'dashboard.html')); });
+app.get('/dashboard', (req, res) => {
+    if (!req.session.userId) return res.redirect('/');
+    // Keyholders / SMs / ASMs get bounced to their store-menu instead of the district panel.
+    if (!DM_ROLES.includes(String(req.session.role || '').toLowerCase())) return res.redirect('/store-menu');
+    res.sendFile(path.join(__dirname, 'dashboard.html'));
+});
 app.get('/store-menu', (req, res) => { if (!req.session.userId) return res.redirect('/'); res.sendFile(path.join(__dirname, 'store-menu.html')); });
 app.get('*', (req, res) => res.sendFile(path.join(__dirname, 'index.html')));
 
