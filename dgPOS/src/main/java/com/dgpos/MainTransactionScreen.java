@@ -44,7 +44,8 @@ public class MainTransactionScreen {
         Label tillLabel = new Label("Till: 01");
         tillLabel.getStyleClass().add("status-text");
         
-        Label storeLabel = new Label("🏪 Store #14302 | 216 Belknap St. Superior WI 54880");
+        Label storeLabel = new Label("🏪 Store #" + StoreConfig.storeId()
+                + " | " + StoreConfig.street() + " " + StoreConfig.city() + " " + StoreConfig.state() + " " + StoreConfig.zip());
         storeLabel.getStyleClass().add("status-text");
 
         Label cashierLabel = new Label("👤 Cashier EID: " + eid);

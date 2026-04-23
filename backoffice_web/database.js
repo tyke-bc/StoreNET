@@ -37,8 +37,41 @@ async function initEnterpriseDatabase() {
             db_name VARCHAR(50),
             db_user VARCHAR(50),
             db_password VARCHAR(100),
-            status VARCHAR(20) DEFAULT 'Online'
+            status VARCHAR(20) DEFAULT 'Online',
+            street VARCHAR(100),
+            city VARCHAR(50),
+            state VARCHAR(10),
+            zip VARCHAR(20),
+            phone VARCHAR(30),
+            receipt_printer_ip VARCHAR(50),
+            receipt_printer_port INT DEFAULT 9100,
+            tax_rate DECIMAL(6,4) DEFAULT 0.055
         )`);
+
+        // Patch existing stores tables for new metadata columns (per-store identity moves off hardcoded strings)
+        const storeCols = [
+            "ALTER TABLE stores ADD COLUMN street VARCHAR(100)",
+            "ALTER TABLE stores ADD COLUMN city VARCHAR(50)",
+            "ALTER TABLE stores ADD COLUMN state VARCHAR(10)",
+            "ALTER TABLE stores ADD COLUMN zip VARCHAR(20)",
+            "ALTER TABLE stores ADD COLUMN phone VARCHAR(30)",
+            "ALTER TABLE stores ADD COLUMN receipt_printer_ip VARCHAR(50)",
+            "ALTER TABLE stores ADD COLUMN receipt_printer_port INT DEFAULT 9100",
+            "ALTER TABLE stores ADD COLUMN tax_rate DECIMAL(6,4) DEFAULT 0.055"
+        ];
+        for (const sql of storeCols) {
+            try { await connection.query(sql); } catch (e) {}
+        }
+
+        // Seed store 14302 metadata if row exists but new columns are empty (one-time backfill for existing deploys)
+        await connection.query(`UPDATE stores SET
+            street = COALESCE(NULLIF(street, ''), '216 BELKNAP ST'),
+            city = COALESCE(NULLIF(city, ''), 'SUPERIOR'),
+            state = COALESCE(NULLIF(state, ''), 'WI'),
+            zip = COALESCE(NULLIF(zip, ''), '54880'),
+            phone = COALESCE(NULLIF(phone, ''), '(715) 718-6650'),
+            receipt_printer_ip = COALESCE(NULLIF(receipt_printer_ip, ''), '192.168.0.179')
+            WHERE id = 14302`);
 
         await connection.query(`CREATE TABLE IF NOT EXISTS global_users (
             id INT AUTO_INCREMENT PRIMARY KEY,

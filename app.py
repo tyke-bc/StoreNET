@@ -1,3 +1,4 @@
+import os
 from flask import Flask, request, render_template_string, jsonify
 import requests
 from requests.exceptions import RequestException
@@ -5,10 +6,11 @@ from requests.exceptions import RequestException
 app = Flask(__name__)
 
 # ---------------------------------------------------------------------
-# Dollar General API config (from your HAR, store 22670)
+# Dollar General API config — STORE_NUMBER scopes price/availability to a single store.
+# Override via DG_STORE_NUMBER env var. Default 22670 is a tracer store we know returns data.
 # ---------------------------------------------------------------------
 DG_SEARCH_URL = "https://dggo.dollargeneral.com/omni/api/v5/search/shoppinglist/product/Provider"
-STORE_NUMBER = 22670
+STORE_NUMBER = int(os.environ.get("DG_STORE_NUMBER", "22670"))
 DCC_URL = "http://192.168.0.192:3000/api/inventory/master/add"
 
 HEADERS = {
@@ -108,7 +110,7 @@ HTML_TEMPLATE = """
 <html>
 <head>
     <meta charset="utf-8">
-    <title>DG 14302 UPC Finder</title>
+    <title>DG {{ store }} UPC Finder</title>
     <style>
         body { font-family: sans-serif; margin: 1.5rem; }
         h1 { margin-bottom: 0.5rem; }

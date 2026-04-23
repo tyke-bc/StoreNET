@@ -66,7 +66,7 @@ public class PosLogin extends Application {
         Label statusLabel = new Label("Online");
         statusLabel.getStyleClass().add("status-text");
 
-        Label locationLabel = new Label("Store #14302 - Superior, WI");
+        Label locationLabel = new Label(StoreConfig.statusLabel());
         locationLabel.getStyleClass().add("status-text");
 
         Label tillLabel = new Label("Till Id: 1");

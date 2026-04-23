@@ -1,4 +1,6 @@
+import argparse
 import json
+import os
 import requests
 import time
 import sys
@@ -9,7 +11,13 @@ HAR_FILE = "www.dollargeneral.com.har"
 
 # From your working app.py
 DG_SEARCH_URL = "https://dggo.dollargeneral.com/omni/api/v5/search/shoppinglist/product/Provider"
-STORE_NUMBER = 14302
+
+# Store number used by the DG search API for price/inventory scoping. Override via --store or
+# DG_STORE_NUMBER env var so this script works for whichever store is being seeded.
+_parser = argparse.ArgumentParser(add_help=False)
+_parser.add_argument("--store", type=int, default=int(os.environ.get("DG_STORE_NUMBER", "14302")))
+_known, _ = _parser.parse_known_args()
+STORE_NUMBER = _known.store
 
 # HEADERS - updated from HAR capture
 HEADERS = {

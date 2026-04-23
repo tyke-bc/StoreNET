@@ -10,6 +10,7 @@ import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.compose.runtime.Composable
+import androidx.compose.ui.platform.LocalContext
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.rememberNavController
@@ -24,6 +25,12 @@ class MainActivity : ComponentActivity() {
         var loggedInUser: String = "Default User"
         var loggedInRole: String = "SA"
         var loggedInEid: String = ""
+
+        // Remembered across sessions by LoginScreen. COMPASS/RESPOND launch without a fresh
+        // login, so they rely on this to know which store's data to pull.
+        fun lastStoreId(context: Context): String =
+            context.getSharedPreferences("hht_prefs", Context.MODE_PRIVATE)
+                .getString("last_store_id", "") ?: ""
     }
 
     private val scanReceiver = object : BroadcastReceiver() {
@@ -64,14 +71,25 @@ class MainActivity : ComponentActivity() {
 @Composable
 fun HHTApp() {
     val navController = rememberNavController()
+    val context = LocalContext.current
 
     NavHost(navController = navController, startDestination = "launcher") {
         composable("launcher") {
             LauncherScreen(onOpenApp = { appName ->
                 when (appName) {
                     "HHT" -> navController.navigate("login")
-                    "COMPASS" -> navController.navigate("scan/14302")
-                    "RESPOND" -> navController.navigate("respond/14302")
+                    // COMPASS/RESPOND have no login — fall back to login if this device has never
+                    // picked a store, so we never send an empty X-Store-ID.
+                    "COMPASS" -> {
+                        val sid = MainActivity.lastStoreId(context)
+                        if (sid.isNotEmpty()) navController.navigate("scan/$sid")
+                        else navController.navigate("login")
+                    }
+                    "RESPOND" -> {
+                        val sid = MainActivity.lastStoreId(context)
+                        if (sid.isNotEmpty()) navController.navigate("respond/$sid")
+                        else navController.navigate("login")
+                    }
                 }
             })
         }
@@ -83,13 +101,15 @@ fun HHTApp() {
             })
         }
         composable("scan/{storeId}") { backStackEntry ->
-            val storeId = backStackEntry.arguments?.getString("storeId") ?: "14302"
+            // Route args are always set by nav calls above — empty string would fail the API
+            // with a clear "No Store ID provided" rather than silently querying the wrong store.
+            val storeId = backStackEntry.arguments?.getString("storeId") ?: ""
             ScanScreen(storeId = storeId, onBackToLauncher = {
                 navController.popBackStack("launcher", inclusive = false)
             })
         }
         composable("respond/{storeId}") { backStackEntry ->
-            val storeId = backStackEntry.arguments?.getString("storeId") ?: "14302"
+            val storeId = backStackEntry.arguments?.getString("storeId") ?: ""
             RespondScreen(storeId = storeId, onBack = {
                 navController.popBackStack("launcher", inclusive = false)
             })

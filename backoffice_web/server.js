@@ -497,9 +497,54 @@ const requireAuth = (req, res, next) => {
 
 app.get('/api/stores', async (req, res) => {
     try {
-        const [rows] = await enterprisePool().query('SELECT id, name, ip_address, status FROM stores');
+        const [rows] = await enterprisePool().query(
+            'SELECT id, name, ip_address, status, street, city, state, zip, phone, receipt_printer_ip, receipt_printer_port, tax_rate FROM stores'
+        );
         res.json(rows);
     } catch (err) { res.status(500).json({ success: false, message: 'Enterprise DB Error' }); }
+});
+
+// DM-only: register a new store in the enterprise directory. Per-store DB tables are created
+// lazily the first time any request routes to this store (see storeContext middleware).
+function requireDm(req, res, next) {
+    const role = String(req.session.role || '').toLowerCase();
+    if (!DM_ROLES.includes(role)) return res.status(403).json({ success: false, message: 'DM access required.' });
+    next();
+}
+
+app.post('/api/stores', requireDm, async (req, res) => {
+    const b = req.body || {};
+    if (!b.id || !b.name || !b.ip_address || !b.db_name || !b.db_user) {
+        return res.status(400).json({ success: false, message: 'id, name, ip_address, db_name, db_user are required.' });
+    }
+    try {
+        await enterprisePool().query(
+            `INSERT INTO stores (id, name, ip_address, db_name, db_user, db_password, status, street, city, state, zip, phone, receipt_printer_ip, receipt_printer_port, tax_rate)
+             VALUES (?, ?, ?, ?, ?, ?, COALESCE(?, 'Online'), ?, ?, ?, ?, ?, ?, COALESCE(?, 9100), COALESCE(?, 0.055))`,
+            [b.id, b.name, b.ip_address, b.db_name, b.db_user, b.db_password || '', b.status,
+             b.street, b.city, b.state, b.zip, b.phone, b.receipt_printer_ip, b.receipt_printer_port, b.tax_rate]
+        );
+        invalidateStoreInfo(b.id);
+        res.json({ success: true, id: b.id });
+    } catch (err) { res.status(500).json({ success: false, message: err.message }); }
+});
+
+app.put('/api/stores/:id', requireDm, async (req, res) => {
+    const id = req.params.id;
+    const b = req.body || {};
+    const fields = ['name', 'ip_address', 'db_name', 'db_user', 'db_password', 'status',
+                    'street', 'city', 'state', 'zip', 'phone', 'receipt_printer_ip', 'receipt_printer_port', 'tax_rate'];
+    const sets = [], vals = [];
+    for (const f of fields) {
+        if (b[f] !== undefined) { sets.push(`${f} = ?`); vals.push(b[f]); }
+    }
+    if (sets.length === 0) return res.status(400).json({ success: false, message: 'No fields to update.' });
+    vals.push(id);
+    try {
+        await enterprisePool().query(`UPDATE stores SET ${sets.join(', ')} WHERE id = ?`, vals);
+        invalidateStoreInfo(id);
+        res.json({ success: true });
+    } catch (err) { res.status(500).json({ success: false, message: err.message }); }
 });
 
 // Role-based landing decision. DM-tier (super_admin / admin) → district control;
@@ -769,7 +814,24 @@ async function resolveScannedItem(pool, rawCode) {
 }
 
 // --- PRINTER UTILITY (Ported from dgPOS) ---
+// Default used only if a store row has no receipt_printer_ip set. Per-store printers live in
+// stores.receipt_printer_ip and are resolved via getStoreInfo() below.
 const PRINTER_CONFIG = { IP: '192.168.0.179', PORT: 9100 };
+
+// Store metadata cache — reset when stores are updated via admin endpoints.
+const storeInfoCache = new Map();
+async function getStoreInfo(storeId) {
+    if (!storeId) return null;
+    if (storeInfoCache.has(storeId)) return storeInfoCache.get(storeId);
+    const [rows] = await enterprisePool().query('SELECT * FROM stores WHERE id = ?', [storeId]);
+    const info = rows[0] || null;
+    if (info) storeInfoCache.set(storeId, info);
+    return info;
+}
+function invalidateStoreInfo(storeId) {
+    if (storeId) storeInfoCache.delete(storeId);
+    else storeInfoCache.clear();
+}
 const ESC = {
     INIT: Buffer.from([0x1b, 0x40]),
     CENTER: Buffer.from([0x1b, 0x61, 0x01]),
@@ -794,16 +856,27 @@ const ESC = {
 
 
 
-async function sendToPrinter(data) {
+async function sendToPrinter(data, opts) {
+    const ip = (opts && opts.ip) || PRINTER_CONFIG.IP;
+    const port = (opts && opts.port) || PRINTER_CONFIG.PORT;
     return new Promise((resolve, reject) => {
         const client = new net.Socket();
-        client.connect(PRINTER_CONFIG.PORT, PRINTER_CONFIG.IP, () => {
+        client.connect(port, ip, () => {
             client.write(data);
             client.end();
             resolve();
         });
         client.on('error', (err) => { client.destroy(); reject(err); });
     });
+}
+
+// Convenience: resolve store printer config and call sendToPrinter. Falls back to default if unset.
+async function printForStore(storeId, data) {
+    const info = await getStoreInfo(storeId);
+    const opts = info && info.receipt_printer_ip
+        ? { ip: info.receipt_printer_ip, port: info.receipt_printer_port || PRINTER_CONFIG.PORT }
+        : undefined;
+    return sendToPrinter(data, opts);
 }
 
 // --- LASER PRINTER (HP DeskJet Plus 4155, USB via CUPS+ipp-usb on the host) ---
@@ -2999,8 +3072,8 @@ app.post('/api/bopis/manifest/print/:id', async (req, res) => {
             Buffer.from("MASTER RECEIVE AUTHORIZED\n"),
             ESC.FEED_3, ESC.CUT
         ]);
-        
-        await sendToPrinter(receiptData);
+
+        await printForStore(req.storeId, receiptData);
         res.json({ success: true });
     } catch (err) { res.status(500).json({ success: false, message: err.message }); }
 });
@@ -3034,8 +3107,8 @@ app.post('/api/bopis/rolltainer/print/:id', async (req, res) => {
             ESC.BARCODE(rt.barcode),
             ESC.FEED_3, ESC.CUT
         ]);
-        
-        await sendToPrinter(receiptData);
+
+        await printForStore(req.storeId, receiptData);
         res.json({ success: true });
     } catch (err) { res.status(500).json({ success: false, message: err.message }); }
 });
@@ -3214,10 +3287,13 @@ app.post('/api/bopis/finalize/:id', async (req, res) => {
 
     try {
         const dateStr = new Date().toLocaleString();
+        const storeInfo = await getStoreInfo(req.storeId);
+        const storeHeader = storeInfo
+            ? `DOLLAR GENERAL STORE #${storeInfo.id}\n${(storeInfo.street || '').toUpperCase()}\n${(storeInfo.city || '').toUpperCase()}, ${(storeInfo.state || '').toUpperCase()} ${storeInfo.zip || ''}\n`
+            : `DOLLAR GENERAL STORE #${req.storeId}\n`;
         let receiptData = Buffer.concat([
             ESC.INIT, ESC.CENTER, ESC.BOLD_ON,
-            Buffer.from("DOLLAR GENERAL STORE #14302\n"),
-            Buffer.from("216 BELKNAP ST\nSUPERIOR, WI 54880\n"),
+            Buffer.from(storeHeader),
             Buffer.from(order.is_mock ? "TEST ORDER - NO INV IMPACT\n" : "ONLINE PICKUP RECEIPT\n"),
             Buffer.from("\n"),
             ESC.BOLD_OFF, ESC.LEFT,
@@ -3250,7 +3326,7 @@ app.post('/api/bopis/finalize/:id', async (req, res) => {
             ESC.FEED_3, ESC.CUT
         ]);
 
-        await sendToPrinter(receiptData);
+        await printForStore(req.storeId, receiptData);
     } catch (printErr) { console.error("Printing failed:", printErr.message); }
 
     res.json({ success: true, message: order.is_mock ? "Test order finalized (No inventory impact)." : "Order finalized and receipt printed.", subtotal, tax, total });
@@ -3538,7 +3614,7 @@ app.post('/api/print_section_barcode', async (req, res) => {
             ESC.BOLD_OFF,
             ESC.FEED_3
         ]);
-        await sendToPrinter(data);
+        await printForStore(req.storeId, data);
         res.json({ success: true });
     } catch (err) { res.status(500).json({ success: false, message: err.message }); }
 });
@@ -3562,7 +3638,7 @@ app.post('/api/print_location_barcode', async (req, res) => {
             ESC.BOLD_OFF,
             ESC.FEED_3
         ]);
-        await sendToPrinter(data);
+        await printForStore(req.storeId, data);
         res.json({ success: true });
     } catch (err) { res.status(500).json({ success: false, message: err.message }); }
 });

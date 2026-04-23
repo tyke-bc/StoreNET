@@ -8,9 +8,9 @@ import java.util.List;
 
 public class PrinterService {
 
-    // Printer Configuration
-    private static final String PRINTER_IP = "192.168.0.179";
-    private static final int PRINTER_PORT = 9100;
+    // Printer Configuration — sourced from config.properties via StoreConfig.
+    private static final String PRINTER_IP = StoreConfig.printerIp();
+    private static final int PRINTER_PORT = StoreConfig.printerPort();
 
     // ESC/POS Commands
     private static final byte[] INIT = {0x1b, 0x40};
@@ -43,10 +43,12 @@ public class PrinterService {
             baos.write(INIT);
             baos.write(CENTER);
             baos.write(BOLD_ON);
-            baos.write("DOLLAR GENERAL STORE #14302\n".getBytes());
-            baos.write("216 BELKNAP ST\n".getBytes());
-            baos.write("SUPERIOR, WI 54880\n".getBytes());
-            baos.write("(715) 718-6650\n".getBytes());
+            baos.write((StoreConfig.receiptHeader() + "\n").getBytes());
+            if (!StoreConfig.street().isEmpty()) baos.write((StoreConfig.street() + "\n").getBytes());
+            if (!StoreConfig.city().isEmpty() || !StoreConfig.state().isEmpty() || !StoreConfig.zip().isEmpty()) {
+                baos.write((StoreConfig.city() + ", " + StoreConfig.state() + " " + StoreConfig.zip() + "\n").getBytes());
+            }
+            if (!StoreConfig.phone().isEmpty()) baos.write((StoreConfig.phone() + "\n").getBytes());
             baos.write("SALE TRANSACTION\n\n".getBytes());
             baos.write(BOLD_OFF);
 
@@ -88,9 +90,10 @@ public class PrinterService {
             baos.write("\n".getBytes());
 
             baos.write(RIGHT);
-            double tax = taxableSubtotal * 0.055;
+            double taxRate = StoreConfig.taxRate();
+            double tax = taxableSubtotal * taxRate;
             double total = subtotal + tax;
-            baos.write(String.format("Tax (5.5%%)         $%.2f\n", tax).getBytes());
+            baos.write(String.format("Tax (%.1f%%)         $%.2f\n", taxRate * 100.0, tax).getBytes());
             baos.write(BOLD_ON);
             baos.write(String.format("Balance to pay       $%.2f\n", total).getBytes());
             baos.write(BOLD_OFF);
@@ -98,7 +101,7 @@ public class PrinterService {
 
             baos.write(LEFT);
             String dateStr = new SimpleDateFormat("MM-dd-yy hh:mm a").format(new Date());
-            baos.write(("STORE 14302   TILL 1   TRANS. " + barcode.substring(Math.max(0, barcode.length() - 6)) + "\n").getBytes());
+            baos.write(("STORE " + StoreConfig.storeId() + "   TILL 1   TRANS. " + barcode.substring(Math.max(0, barcode.length() - 6)) + "\n").getBytes());
             baos.write(("DATE " + dateStr + "\n\n").getBytes());
             baos.write(("Your cashier was: " + DatabaseManager.getUserName(eid).toUpperCase() + "\n\n").getBytes());
 
@@ -309,9 +312,11 @@ public class PrinterService {
             baos.write(INIT);
             baos.write(CENTER);
             baos.write(BOLD_ON);
-            baos.write("DOLLAR GENERAL STORE #14302\n".getBytes());
-            baos.write("216 BELKNAP ST\n".getBytes());
-            baos.write("SUPERIOR, WI 54880\n".getBytes());
+            baos.write((StoreConfig.receiptHeader() + "\n").getBytes());
+            if (!StoreConfig.street().isEmpty()) baos.write((StoreConfig.street() + "\n").getBytes());
+            if (!StoreConfig.city().isEmpty() || !StoreConfig.state().isEmpty() || !StoreConfig.zip().isEmpty()) {
+                baos.write((StoreConfig.city() + ", " + StoreConfig.state() + " " + StoreConfig.zip() + "\n").getBytes());
+            }
             baos.write(BOLD_OFF);
             baos.write("\n".getBytes());
             baos.write(BOLD_ON);

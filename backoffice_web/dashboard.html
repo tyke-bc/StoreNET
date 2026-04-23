@@ -126,7 +126,7 @@
                 <div id="mi-local" class="tab-section" style="display:none;">
                     <div class="card" style="display:flex; justify-content:space-between; align-items:center; flex-wrap: wrap; gap: 10px;">
                         <div style="display:flex; align-items:center; gap: 15px;">
-                            <span id="localContextLabel">Context: Store #14302</span>
+                            <span id="localContextLabel">Context: —</span>
                             <div>
                                 <button onclick="changeLocalPage(-1)" style="padding: 2px 8px;">&lt; Prev</button>
                                 <span id="localPageLabel" style="font-weight: bold; margin: 0 10px;">Page 1</span>
@@ -301,7 +301,7 @@
 
             <div id="module-employees" class="module-view" style="display: none;">
                 <div class="content-header"><h1>Employee Maintenance</h1></div>
-                <div class="card" id="empContextLabel">Context: Store #14302</div>
+                <div class="card" id="empContextLabel">Context: —</div>
                 <table class="data-table" id="employeesTable">
                     <thead>
                         <tr class="provision-row">
@@ -326,7 +326,7 @@
 
             <div id="module-audit-logs" class="module-view" style="display: none;">
                 <div class="content-header"><h1>Store Audit Logs</h1></div>
-                <div class="card" id="logContextLabel">Context: Store #14302</div>
+                <div class="card" id="logContextLabel">Context: —</div>
                 <table class="data-table" id="logsTable">
                     <thead><tr><th>Timestamp</th><th>EID</th><th>Action</th><th>Details</th></tr></thead>
                     <tbody></tbody>
@@ -374,7 +374,7 @@
                         <button class="primary" onclick="openCreateCustomOrderModal()" style="background: #3498db;">+ Create Custom Order</button>
                     </div>
                 </div>
-                <div class="card" id="orderContextLabel">Context: Store #14302</div>
+                <div class="card" id="orderContextLabel">Context: —</div>
                 <table class="data-table" id="ordersTable">
                     <thead>
                         <tr><th>Order ID</th><th>Customer</th><th>Status</th><th>Subtotal</th><th>Tax</th><th>Total</th><th>Created</th><th>Actions</th></tr>
@@ -406,7 +406,7 @@
                             <button class="primary" onclick="exportCsv('manifests')" style="background:#2c3e50;">Export CSV</button>
                         </div>
                     </div>
-                    <div class="card" id="trkContextLabel">Context: Store #14302</div>
+                    <div class="card" id="trkContextLabel">Context: —</div>
                     <table class="data-table" id="manifestsTable">
                         <thead>
                             <tr><th>Manifest #</th><th>Status</th><th>Created</th><th>Action</th></tr>
@@ -433,7 +433,7 @@
                             <button class="primary" onclick="exportCsv('reorders')" style="background:#2c3e50;">Export CSV</button>
                         </div>
                     </div>
-                    <div class="card" id="reorderContextLabel">Context: Store #14302</div>
+                    <div class="card" id="reorderContextLabel">Context: —</div>
                     <table class="data-table" id="reordersTable">
                         <thead>
                             <tr><th>SKU</th><th>Name</th><th>Stock (Floor + Back)</th><th>Reorder (Units)</th><th>Reorder (Boxes)</th><th>Status</th><th>Created</th><th>Actions</th></tr>
@@ -448,7 +448,7 @@
                     <h1>Rolltainer Management</h1>
                     <button class="primary" onclick="openCreateRolltainerModal()" style="background: #e67e22;">+ Build New Rolltainer</button>
                 </div>
-                <div class="card" id="rtContextLabel">Context: Store #14302</div>
+                <div class="card" id="rtContextLabel">Context: —</div>
                 <table class="data-table" id="rolltainersTable">
                     <thead>
                         <tr><th>Barcode</th><th>Status</th><th>Created</th><th>Actions</th></tr>
@@ -1262,7 +1262,9 @@
     </div>
 
     <script>
-        let currentStoreId = localStorage.getItem('district_store_id') || '14302';
+        // No default — the first store returned by /api/stores becomes the initial context on
+        // first visit. DMs switch via the store selector and the choice persists in localStorage.
+        let currentStoreId = localStorage.getItem('district_store_id') || '';
         let stores = [];
         let activePushType = '';
 
@@ -1492,6 +1494,14 @@
 
         async function loadStores() {
             stores = await apiFetch('/api/stores');
+            // First visit (or stale id that no longer exists) — fall back to the first store so no
+            // request ever leaves the page without an X-Store-ID header.
+            if (!currentStoreId || !stores.some(s => String(s.id) === String(currentStoreId))) {
+                if (stores.length > 0) {
+                    currentStoreId = String(stores[0].id);
+                    localStorage.setItem('district_store_id', currentStoreId);
+                }
+            }
             const sel = document.getElementById('globalStoreSelector'); sel.innerHTML = '';
             stores.forEach(s => sel.innerHTML += `<option value="${s.id}" ${s.id == currentStoreId ? 'selected' : ''}>Store #${s.id}</option>`);
             const tb = document.querySelector('#storesTable tbody'); tb.innerHTML = '';

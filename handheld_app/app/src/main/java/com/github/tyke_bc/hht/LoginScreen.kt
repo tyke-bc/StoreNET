@@ -10,6 +10,7 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.PasswordVisualTransformation
@@ -32,7 +33,11 @@ fun LoginScreen(onLoginSuccess: (String) -> Unit) {
     var errorMessage by remember { mutableStateOf<String?>(null) }
     val coroutineScope = rememberCoroutineScope()
 
-    var storeNumber by remember { mutableStateOf("14302") }
+    // Remember the last store this device logged into so the user doesn't have to retype every
+     // session. First launch shows blank — the device isn't pinned, the cashier picks at login.
+    val context = LocalContext.current
+    val prefs = remember { context.getSharedPreferences("hht_prefs", android.content.Context.MODE_PRIVATE) }
+    var storeNumber by remember { mutableStateOf(prefs.getString("last_store_id", "") ?: "") }
     var showStoreDialog by remember { mutableStateOf(false) }
     var inputStoreNumber by remember { mutableStateOf(storeNumber) }
 
@@ -184,6 +189,7 @@ fun LoginScreen(onLoginSuccess: (String) -> Unit) {
                                             MainActivity.loggedInUser = res.user.name
                                             MainActivity.loggedInRole = res.user.role
                                             MainActivity.loggedInEid = username.trim()
+                                            prefs.edit().putString("last_store_id", storeNumber).apply()
                                             onLoginSuccess(storeNumber)
                                         } else {
                                             errorMessage = res.message ?: "Invalid EID or PIN."
